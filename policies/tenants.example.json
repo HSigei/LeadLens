@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "tenants": {
+    "+15551234567": {
+      "tenant_id": "client-acme",
+      "escalation_number": "+15557654321",
+      "jurisdiction": "US-CA",
+      "processing_region": "us-east-1",
+      "speech_language": "en-US",
+      "privacy_notice_version": "US-CA-2026-01",
+      "lawful_basis": "consent",
+      "recording_consent_required": "true",
+      "dpia_approved": "true",
+      "cross_border_safeguard": "contractual_safeguards",
+      "approved_by": "Client privacy officer",
+      "approved_at": "2026-09-07",
+      "data_protection_contact": "privacy@example.com",
+      "greeting": "Thank you. How may I help you today?"
+    }
+  }
+}

@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+from fastapi import HTTPException
+
+from core import validate_tenant_compliance
+
+
+POLICY_VERSION = 1
+REQUIRED_APPROVALS = ("approved_by", "approved_at", "data_protection_contact")
+
+
+def read_policy_file(path: str) -> dict[str, Any]:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Cannot read tenant policy file: {error}") from error
+
+
+def policy_registry() -> dict[str, Any]:
+    path = os.getenv("TENANT_POLICY_FILE")
+    registry = read_policy_file(path) if path else json.loads(os.getenv("TENANT_ROUTING_JSON", "{}"))
+    if "tenants" not in registry:
+        registry = {"version": POLICY_VERSION, "tenants": registry}
+    if registry.get("version") != POLICY_VERSION or not isinstance(registry.get("tenants"), dict):
+        raise ValueError("Tenant policy must contain version 1 and a tenants object.")
+    return registry
+
+
+def validate_registry(registry: dict[str, Any]) -> None:
+    if registry.get("version") != POLICY_VERSION or not registry.get("tenants"):
+        raise ValueError("Tenant policy requires version 1 and at least one tenant mapping.")
+    for number, tenant in registry["tenants"].items():
+        if not number.startswith("+") or not isinstance(tenant, dict):
+            raise ValueError("Each tenant mapping needs an E.164 phone number and an object policy.")
+        validate_tenant_compliance(tenant)
+        missing = [field for field in REQUIRED_APPROVALS if not tenant.get(field)]
+        if missing:
+            raise ValueError(f"{number} is missing documented approvals: {', '.join(missing)}.")
+
+
+def tenant_for_number(number: str) -> dict[str, str]:
+    try:
+        registry = policy_registry()
+        validate_registry(registry)
+    except ValueError as error:
+        raise HTTPException(503, f"Tenant policy is invalid: {error}") from error
+    tenant = registry["tenants"].get(number)
+    if not tenant:
+        raise HTTPException(404, "No active tenant is configured for this number.")
+    return tenant
