@@ -1,0 +1,8 @@
+[run]
+omit =
+    tests/*
+    .agents/*
+    .venv/*
+    */site-packages/*
+    */Lib/site-packages/*
+    coverage.json

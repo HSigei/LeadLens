@@ -1,6 +1,6 @@
 # Self-Hosting with Terraform
 
-The `infra` module provisions a production-oriented AWS foundation for LeadLens. It is optional for the hosted SaaS model and useful for organizations that require ownership of their infrastructure and data plane.
+The `infra` module provisions the AWS infrastructure needed to run this application. It is optional for local development and useful for teams that want ownership of their infrastructure and data plane.
 
 ## Resources Created
 
@@ -16,7 +16,7 @@ The `infra` module provisions a production-oriented AWS foundation for LeadLens.
 
 - Terraform 1.7 or later and AWS CLI credentials for the target account.
 - A VPC with two public subnets and two private subnets. Private ECS tasks need controlled outbound HTTPS connectivity.
-- An ACM certificate in the target region, a built LeadLens container image, configured AWS Secrets Manager values, verified SES identities, and a reviewed tenant policy.
+- An ACM certificate in the target region, a built container image, configured AWS Secrets Manager values, verified SES identities, and a reviewed tenant policy.
 
 ## Deploy
 

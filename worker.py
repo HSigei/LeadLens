@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import time
 from datetime import UTC, datetime
@@ -12,6 +13,10 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
 from core import audit, redact_pii, retention_expiry, utc_now, validate_analysis
+from observability import capture_exception, configure_logging, log_event
+
+
+configure_logging()
 
 
 def env(name: str) -> str:
@@ -75,6 +80,7 @@ def sync_crm(call: dict, analysis: dict) -> None:
 
 
 def process(call_sid: str) -> None:
+    log_event("worker.process.started", call_sid=call_sid)
     call = table.get_item(Key={"call_sid": call_sid})["Item"]
     if call.get("status") == "completed":
         return
@@ -96,17 +102,27 @@ def process(call_sid: str) -> None:
     report_url = s3.generate_presigned_url("get_object", Params={"Bucket": env("CALL_DATA_BUCKET"), "Key": report_key}, ExpiresIn=3600)
     recipients = [address.strip() for address in env("REPORT_RECIPIENTS").split(",") if address.strip()]
     ses.send_email(FromEmailAddress=env("REPORT_SENDER"), Destination={"ToAddresses": recipients}, Content={"Simple": {"Subject": {"Data": f"Call intelligence report: {call_sid}"}, "Body": {"Text": {"Data": f"Call analysis complete. Secure report link, expiring in 24 hours: {report_url}"}}}})
+    log_event("worker.process.completed", call_sid=call_sid)
 
 
 def run() -> None:
     while True:
-        messages = sqs.receive_message(QueueUrl=env("PROCESSING_QUEUE_URL"), MaxNumberOfMessages=1, WaitTimeSeconds=20).get("Messages", [])
+        try:
+            messages = sqs.receive_message(QueueUrl=env("PROCESSING_QUEUE_URL"), MaxNumberOfMessages=1, WaitTimeSeconds=20).get("Messages", [])
+        except Exception as error:
+            log_event("worker.queue.exception", logging.ERROR, error_type=type(error).__name__, error=str(error))
+            capture_exception(error)
+            time.sleep(5)
+            continue
         for message in messages:
+            call_sid = "unknown"
             try:
-                process(json.loads(message["Body"])["call_sid"])
+                call_sid = json.loads(message["Body"])["call_sid"]
+                process(call_sid)
                 sqs.delete_message(QueueUrl=env("PROCESSING_QUEUE_URL"), ReceiptHandle=message["ReceiptHandle"])
             except Exception as error:
-                print(f"Processing failed: {error}", flush=True)
+                log_event("worker.process.exception", logging.ERROR, call_sid=call_sid, error_type=type(error).__name__, error=str(error))
+                capture_exception(error)
         time.sleep(1)
 
 

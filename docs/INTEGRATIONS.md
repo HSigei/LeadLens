@@ -2,7 +2,7 @@
 
 ## Twilio Voice
 
-LeadLens receives a signed inbound call webhook, requests consent, starts dual-channel recording after consent, and gathers caller speech one turn at a time. The caller can request a person, agent, representative, supervisor, or no further calls; the service transfers to `escalation_number` from the tenant policy.
+The application receives a signed inbound call webhook, requests consent, starts dual-channel recording after consent, and gathers caller speech one turn at a time. The caller can request a person, agent, representative, supervisor, or no further calls; the service transfers to `escalation_number` from the tenant policy.
 
 Required values: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `PUBLIC_BASE_URL`, and a tenant E.164 number mapping.
 

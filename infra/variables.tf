@@ -11,6 +11,18 @@ variable "twilio_account_sid" { type = string }
 variable "report_sender" { type = string }
 variable "report_recipients" { type = string }
 variable "alert_email" { type = string }
+variable "sentry_dsn" {
+	type = string
+	default = ""
+}
+variable "sentry_environment" {
+	type = string
+	default = "production"
+}
+variable "sentry_traces_sample_rate" {
+	type = string
+	default = "0.1"
+}
 variable "dashboard_jwt_secret_arn" { type = string }
 variable "openai_api_key_arn" { type = string }
 variable "twilio_secret_arn" { type = string }

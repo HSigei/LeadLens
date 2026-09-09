@@ -20,7 +20,7 @@ Validate a tenant policy independently:
 
 The current automated suite covers PII masking, analysis schema validation, and tenant-bearing JWT validation. CI also compiles application modules and builds the Docker image on GitHub-hosted runners.
 
-`pytest.ini` filters one known deprecation emitted by Starlette's `TestClient` against AnyIO. It does not suppress warnings emitted by LeadLens modules.
+`pytest.ini` filters one known deprecation emitted by Starlette's `TestClient` against AnyIO. It does not suppress warnings emitted by application modules.
 
 Provider integration tests must use non-production resources: a Twilio subaccount, sandbox tenant policy, separate AWS account, test CRM tenant, Stripe test mode, and non-production identity provider.
 

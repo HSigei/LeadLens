@@ -32,6 +32,9 @@ locals {
     { name = "TENANT_ROUTING_JSON", value = var.tenant_policy_json },
     { name = "REPORT_SENDER", value = var.report_sender },
     { name = "REPORT_RECIPIENTS", value = var.report_recipients },
+    { name = "SENTRY_DSN", value = var.sentry_dsn },
+    { name = "SENTRY_ENVIRONMENT", value = var.sentry_environment },
+    { name = "SENTRY_TRACES_SAMPLE_RATE", value = var.sentry_traces_sample_rate },
   ]
   application_secrets = [
     { name = "OPENAI_API_KEY", valueFrom = var.openai_api_key_arn },
@@ -238,6 +241,28 @@ resource "aws_cloudwatch_log_group" "app" {
   tags = local.tags
 }
 
+resource "aws_cloudwatch_log_metric_filter" "api_exceptions" {
+  name           = "${local.name}-api-exceptions"
+  log_group_name = aws_cloudwatch_log_group.app.name
+  pattern        = "{ $.event = \"request.exception\" }"
+  metric_transformation {
+    name      = "ApiExceptions"
+    namespace = "${local.name}/Application"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "worker_exceptions" {
+  name           = "${local.name}-worker-exceptions"
+  log_group_name = aws_cloudwatch_log_group.app.name
+  pattern        = "{ $.event = \"worker.process.exception\" || $.event = \"worker.queue.exception\" }"
+  metric_transformation {
+    name      = "WorkerExceptions"
+    namespace = "${local.name}/Application"
+    value     = "1"
+  }
+}
+
 resource "aws_ecs_cluster" "main" {
   name = local.name
   setting {
@@ -400,4 +425,30 @@ resource "aws_cloudwatch_metric_alarm" "dlq" {
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data = "notBreaching"
   alarm_actions = [aws_sns_topic.alerts.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "api_exceptions" {
+  alarm_name          = "${local.name}-api-exceptions"
+  namespace           = "${local.name}/Application"
+  metric_name         = "ApiExceptions"
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "worker_exceptions" {
+  alarm_name          = "${local.name}-worker-exceptions"
+  namespace           = "${local.name}/Application"
+  metric_name         = "WorkerExceptions"
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
 }

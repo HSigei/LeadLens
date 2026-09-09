@@ -1,6 +1,6 @@
 # Quickstart
 
-Choose one path before configuring LeadLens.
+Choose a deployment path before configuring the application.
 
 ## Local Evaluation
 
@@ -13,9 +13,9 @@ Choose one path before configuring LeadLens.
 
 Local evaluation does not make external Twilio, AWS, OpenAI, CRM, Stripe, or Bedrock integrations available until each provider is configured.
 
-## Managed SaaS
+## Managed deployment
 
-Use the hosted onboarding page to create an organization, select its jurisdiction, record privacy approval, connect approved providers, upload approved knowledge, and complete the sandbox acceptance tests. The service operator owns deployment, monitoring, secrets, and production access.
+Use the onboarding flow to create an organization, select its jurisdiction, record approval state, connect providers, upload approved knowledge, and complete the sandbox acceptance tests. Deployment, monitoring, secrets, and production access are handled by the hosting environment.
 
 ## Self-Hosted AWS
 

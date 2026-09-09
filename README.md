@@ -1,10 +1,6 @@
-# LeadLens
+# Call Center Analysis Agent
 
-> Copyright (c) 2026 Harry Kipngetich Sigei. Licensed under the [Apache License, Version 2.0](LICENSE). LeadLens is a claimed product name; no trademark license is granted.
-
-This is a real, provider-backed call agent. Twilio collects caller speech one turn at a time, OpenAI generates responses, and a separate durable worker processes the completed call into encrypted records, an Excel report, and an email delivery.
-
-Read [DISCLAIMER.md](DISCLAIMER.md), [TRADEMARKS.md](TRADEMARKS.md), and [docs/GLOBAL_COMPLIANCE.md](docs/GLOBAL_COMPLIANCE.md) before production use.
+This project implements a voice-call analysis workflow. Twilio handles inbound voice, OpenAI generates responses and post-call analysis, and a worker process stores the results in AWS, generates reports, and sends notifications.
 
 ## Documentation
 
@@ -49,15 +45,13 @@ Create `policies/tenants.json` from `policies/tenants.example.json`. Have the cl
 .\.venv\Scripts\python.exe tools\validate_tenant_policy.py policies\tenants.json
 ```
 
-## Hosted SaaS Model
-
-LeadLens is intended to run as a managed SaaS service. Customers use the hosted onboarding flow to create their organization profile, record privacy approval, connect supported providers, and manage tenant policy. Platform infrastructure is operated separately by the LeadLens service operator and is not part of this repository.
+## Deployment options
 
 For local development, mount the reviewed policy file at `TENANT_POLICY_FILE`. For Terraform self-hosting, provide the same reviewed policy as the sensitive `tenant_policy_json` variable; it is injected as `TENANT_ROUTING_JSON` and is not baked into the container image.
 
 ## Self-Hosting
 
-The optional [infra](infra) Terraform module lets organizations deploy LeadLens into their own AWS account. Copy `infra/terraform.tfvars.example` to `infra/terraform.tfvars`, fill in account-specific values, then run:
+The optional [infra](infra) Terraform module deploys this application into an AWS account. Copy `infra/terraform.tfvars.example` to `infra/terraform.tfvars`, fill in account-specific values, then run:
 
 ```powershell
 terraform -chdir=infra init
@@ -87,6 +81,6 @@ Schedule the master workbook job once daily through the platform scheduler:
 
 ## Required go-live controls
 
-Do not connect a client number before legal approval of recording consent, disclosure language, retention and deletion policy, permitted AI uses, escalation paths, and the agent's approved knowledge base. Ensure the AWS runtime role is least privilege, CloudTrail logging is enabled, S3 has no public access, and the SQS DLQ is monitored. Every webhook is signature-validated before call data is accepted.
+Before connecting a client number, confirm consent rules, disclosure language, retention and deletion policy, permitted AI uses, escalation paths, and the approved knowledge base. Ensure the AWS runtime role follows least privilege, CloudTrail logging is enabled, S3 has no public access, and the SQS DLQ is monitored. Every webhook is signature-validated before call data is accepted.
 
 The generated report is a per-call workbook. DynamoDB retains the analysis records so the scheduled aggregation job creates daily, weekly, and client-wide master workbooks without unsafe concurrent edits to an Excel file.

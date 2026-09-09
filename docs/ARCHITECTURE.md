@@ -1,6 +1,6 @@
 # Architecture
 
-LeadLens is a multi-tenant voice-agent and call-intelligence foundation. It uses Twilio for telephony, OpenAI for conversational and post-call analysis, AWS for persistent processing, and optional CRM, identity, billing, and knowledge integrations.
+This project implements a multi-tenant voice and call-analysis pipeline. It uses Twilio for telephony, OpenAI for conversational and post-call analysis, AWS for storage and processing, and optional CRM, identity, billing, and knowledge integrations.
 
 ```mermaid
 flowchart LR

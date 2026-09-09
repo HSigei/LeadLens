@@ -48,6 +48,17 @@ Use AWS Secrets Manager or the deployment platform's protected secret store for 
 | `KNOWLEDGE_BASE_ID`, `KNOWLEDGE_DATA_SOURCE_ID` | Bedrock knowledge base and S3 data source IDs. |
 | `CRM_WEBHOOK_URL`, `CRM_WEBHOOK_TOKEN` | Optional outcome-webhook destination and bearer token. |
 
+## Observability
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `LOG_LEVEL` | `INFO` | Minimum level for structured JSON logs written to stdout. |
+| `SENTRY_DSN` | unset | Optional Sentry endpoint for uncaught API and worker exceptions. |
+| `SENTRY_ENVIRONMENT` | `production` | Sentry environment label. |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0.1` | Fraction of requests traced by Sentry. |
+
+Every API response includes an `X-Request-ID` correlation header. Incoming IDs are accepted only when they contain safe identifier characters; otherwise a UUID is generated. Logs redact common PII and credential-like fields. In ECS/Fargate, route stdout to CloudWatch and alert on `request.exception`, `worker.queue.exception`, and `worker.process.exception` events. Do not log transcripts, recording URLs, authorization headers, or provider tokens.
+
 ## Tenant Policy
 
 Copy `policies/tenants.example.json`, complete every field, and validate it with `python tools/validate_tenant_policy.py policies/tenants.json`. See [GLOBAL_COMPLIANCE.md](GLOBAL_COMPLIANCE.md).
@@ -55,7 +66,7 @@ Copy `policies/tenants.example.json`, complete every field, and validate it with
 | Deployment mode | Policy setting |
 | --- | --- |
 | Local Docker Compose | Set `TENANT_POLICY_FILE=/service/policies/tenants.json`; Compose mounts `./policies` read-only. |
-| Managed SaaS | The service operator maintains an approved tenant-policy registry. Do not place customer policy content in browser storage. |
+| Managed deployment | The hosting environment maintains an approved tenant-policy registry. Do not place policy content in browser storage. |
 | Terraform self-hosting | Set the sensitive `tenant_policy_json` input in `infra/terraform.tfvars`. Terraform provides it as `TENANT_ROUTING_JSON`; leave `TENANT_POLICY_FILE` unset in ECS. |
 
 `TENANT_ROUTING_JSON` remains a runtime fallback for automation and should not be committed to source control when it contains customer routing or approval information.
