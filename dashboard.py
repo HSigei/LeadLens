@@ -4,7 +4,6 @@ import os
 from typing import Annotated
 
 import boto3
-from boto3.dynamodb.conditions import Key
 from fastapi import APIRouter, Depends, Header, HTTPException
 
 from core import audit, calls_table, decode_access_token, env
@@ -21,7 +20,7 @@ def principal(authorization: Annotated[str | None, Header()] = None) -> dict[str
 
 @router.get("/calls")
 def list_calls(user: dict[str, str] = Depends(principal), limit: int = 50) -> dict:
-    result = calls_table().query(IndexName="tenant-created-at-index", KeyConditionExpression=Key("tenant_id").eq(user["tenant_id"]), ScanIndexForward=False, Limit=max(1, min(limit, 100)))
+    result = calls_table().query(tenant_id=user["tenant_id"], Limit=max(1, min(limit, 100)))
     audit(user["tenant_id"], user["sub"], "dashboard_calls_read")
     return {"items": result.get("Items", []), "next_key": result.get("LastEvaluatedKey")}
 
@@ -39,7 +38,7 @@ def report_url(call_sid: str, user: dict[str, str] = Depends(principal)) -> dict
 
 @router.get("/metrics")
 def metrics(user: dict[str, str] = Depends(principal)) -> dict:
-    response = calls_table().query(IndexName="tenant-created-at-index", KeyConditionExpression=Key("tenant_id").eq(user["tenant_id"]), ProjectionExpression="analysis, #status", ExpressionAttributeNames={"#status": "status"})
+    response = calls_table().query(tenant_id=user["tenant_id"])
     calls = response.get("Items", [])
     completed = [call for call in calls if call.get("status") == "completed"]
     total = len(completed)
@@ -59,9 +58,22 @@ def erase_call(call_sid: str, user: dict[str, str] = Depends(principal), x_data_
     if call.get("legal_hold"):
         raise HTTPException(409, "Call is subject to a legal hold.")
     storage = boto3.client("s3", region_name=env("AWS_REGION"))
+    deleted_keys: list[str] = []
     for key_name in ("audio_key", "transcript_key", "report_key"):
         if call.get(key_name):
             storage.delete_object(Bucket=env("CALL_DATA_BUCKET"), Key=call[key_name])
+            deleted_keys.append(call[key_name])
     calls_table().delete_item(Key={"call_sid": call_sid})
-    audit(user["tenant_id"], user["sub"], "data_subject_erasure_completed", call_sid)
+    audit(
+        user["tenant_id"],
+        user["sub"],
+        "data_subject_erasure_completed",
+        call_sid,
+        {
+            "erasure_type": "data_subject",
+            "retention_days": int(os.getenv("RETENTION_DAYS", "365")),
+            "keys_deleted": deleted_keys,
+            "legal_hold": bool(call.get("legal_hold")),
+        },
+    )
     return {"status": "erased"}

@@ -12,7 +12,7 @@ import httpx
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
-from core import audit, redact_pii, retention_expiry, utc_now, validate_analysis
+from core import audit, calls_table, redact_pii, retention_expiry, utc_now, validate_analysis
 from observability import capture_exception, configure_logging, log_event
 
 
@@ -27,10 +27,33 @@ def env(name: str) -> str:
 
 
 REGION = env("AWS_REGION")
+MAX_RETRY_COUNT = int(os.getenv("WORKER_MAX_RETRY_COUNT", "5"))
 s3 = boto3.client("s3", region_name=REGION)
 sqs = boto3.client("sqs", region_name=REGION)
 ses = boto3.client("sesv2", region_name=REGION)
-table = boto3.resource("dynamodb", region_name=REGION).Table(env("CALLS_TABLE"))
+
+
+def handle_processing_failure(call_sid: str, error: Exception) -> bool:
+    call = calls_table().get_item(Key={"call_sid": call_sid}).get("Item")
+    if not call:
+        return False
+    retry_count = int(call.get("retry_count", 0)) + 1
+    if retry_count >= MAX_RETRY_COUNT:
+        calls_table().update_item(
+            Key={"call_sid": call_sid},
+            UpdateExpression="SET #status=:status, retry_count=:retry_count, last_error=:error, updated_at=:updated_at",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={":status": "failed", ":retry_count": retry_count, ":error": {"type": type(error).__name__, "message": str(error)}, ":updated_at": utc_now()},
+        )
+        audit(call["tenant_id"], "worker", "call_processing_failed", call_sid, {"error_type": type(error).__name__, "retry_count": retry_count, "max_retries": MAX_RETRY_COUNT})
+        return False
+    calls_table().update_item(
+        Key={"call_sid": call_sid},
+        UpdateExpression="SET retry_count=:retry_count, last_error=:error, #status=:status, updated_at=:updated_at",
+        ExpressionAttributeNames={"#status": "status"},
+        ExpressionAttributeValues={":retry_count": retry_count, ":error": {"type": type(error).__name__, "message": str(error)}, ":status": "queued", ":updated_at": utc_now()},
+    )
+    return True
 
 
 def openai_headers() -> dict[str, str]:
@@ -81,9 +104,13 @@ def sync_crm(call: dict, analysis: dict) -> None:
 
 def process(call_sid: str) -> None:
     log_event("worker.process.started", call_sid=call_sid)
-    call = table.get_item(Key={"call_sid": call_sid})["Item"]
+    call = calls_table().get_item(Key={"call_sid": call_sid}).get("Item")
+    if not call:
+        raise ValueError(f"Call not found for worker: {call_sid}")
     if call.get("status") == "completed":
         return
+    if call.get("tenant_id") is None or call.get("recording_url") is None:
+        raise ValueError(f"Call state is incomplete before processing: {call_sid}")
     recording = httpx.get(call["recording_url"] + ".mp3", auth=(env("TWILIO_ACCOUNT_SID"), env("TWILIO_AUTH_TOKEN")), timeout=120)
     recording.raise_for_status()
     tenant_id = call["tenant_id"]
@@ -97,7 +124,7 @@ def process(call_sid: str) -> None:
     report_key = f"tenants/{tenant_id}/reports/{call_sid}/call-analysis.xlsx"
     put_encrypted(report_key, workbook_bytes(call, analysis), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     sync_crm(call, analysis)
-    table.update_item(Key={"call_sid": call_sid}, UpdateExpression="SET #status=:status, analysis=:analysis, audio_key=:audio, transcript_key=:transcript, report_key=:report, processed_at=:processed", ExpressionAttributeNames={"#status": "status"}, ExpressionAttributeValues={":status": "completed", ":analysis": analysis, ":audio": audio_key, ":transcript": transcript_key, ":report": report_key, ":processed": utc_now()})
+    calls_table().update_item(Key={"call_sid": call_sid}, UpdateExpression="SET #status=:status, analysis=:analysis, audio_key=:audio, transcript_key=:transcript, report_key=:report, processed_at=:processed", ExpressionAttributeNames={"#status": "status"}, ExpressionAttributeValues={":status": "completed", ":analysis": analysis, ":audio": audio_key, ":transcript": transcript_key, ":report": report_key, ":processed": utc_now()})
     audit(tenant_id, "worker", "call_processed", call_sid)
     report_url = s3.generate_presigned_url("get_object", Params={"Bucket": env("CALL_DATA_BUCKET"), "Key": report_key}, ExpiresIn=3600)
     recipients = [address.strip() for address in env("REPORT_RECIPIENTS").split(",") if address.strip()]
@@ -123,6 +150,8 @@ def run() -> None:
             except Exception as error:
                 log_event("worker.process.exception", logging.ERROR, call_sid=call_sid, error_type=type(error).__name__, error=str(error))
                 capture_exception(error)
+                if not handle_processing_failure(call_sid, error):
+                    sqs.delete_message(QueueUrl=env("PROCESSING_QUEUE_URL"), ReceiptHandle=message["ReceiptHandle"])
         time.sleep(1)
 
 

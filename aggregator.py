@@ -9,6 +9,8 @@ import boto3
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
+from core import calls_table
+
 
 def env(name: str) -> str:
     value = os.getenv(name)
@@ -43,12 +45,11 @@ def master_workbook(calls: list[dict]) -> bytes:
 
 def run() -> None:
     region = env("AWS_REGION")
-    table = boto3.resource("dynamodb", region_name=region).Table(env("CALLS_TABLE"))
     calls = []
-    page = table.scan(FilterExpression="#status = :completed", ExpressionAttributeNames={"#status": "status"}, ExpressionAttributeValues={":completed": "completed"})
+    page = calls_table().scan(FilterExpression="#status = :completed", ExpressionAttributeNames={"#status": "status"}, ExpressionAttributeValues={":completed": "completed"})
     calls.extend(page.get("Items", []))
     while page.get("LastEvaluatedKey"):
-        page = table.scan(FilterExpression="#status = :completed", ExpressionAttributeNames={"#status": "status"}, ExpressionAttributeValues={":completed": "completed"}, ExclusiveStartKey=page["LastEvaluatedKey"])
+        page = calls_table().scan(FilterExpression="#status = :completed", ExpressionAttributeNames={"#status": "status"}, ExpressionAttributeValues={":completed": "completed"}, ExclusiveStartKey=page["LastEvaluatedKey"])
         calls.extend(page.get("Items", []))
     key = f"reports/master/call-intelligence-{datetime.now(UTC):%Y-%m-%d}.xlsx"
     bucket = env("CALL_DATA_BUCKET")

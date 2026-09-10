@@ -52,7 +52,7 @@ def test_worker_process_completes_call(monkeypatch):
     call = {"call_sid": "CA1", "tenant_id": "tenant-a", "recording_url": "https://recording", "status": "queued"}
     updates = []
     table = SimpleNamespace(get_item=lambda **kwargs: {"Item": call}, update_item=lambda **kwargs: updates.append(kwargs))
-    monkeypatch.setattr(worker, "table", table)
+    monkeypatch.setattr(worker, "calls_table", lambda: table)
     monkeypatch.setattr(worker.httpx, "get", lambda *args, **kwargs: Response(content=b"audio"))
     monkeypatch.setattr(worker, "transcribe", lambda *args: "caller 0712345678")
     analysis = {"keywords": [], "objections": [], "sentiment": "mixed", "sentiment_score": 50, "agent_performance_score": 70, "issue_resolved": False, "missed_opportunities": [], "training_recommendations": [], "revenue_opportunity": "medium", "customer_experience_notes": "Neutral"}
@@ -68,5 +68,5 @@ def test_worker_process_completes_call(monkeypatch):
 
 
 def test_worker_process_skips_completed(monkeypatch):
-    monkeypatch.setattr(worker, "table", SimpleNamespace(get_item=lambda **kwargs: {"Item": {"status": "completed"}}))
+    monkeypatch.setattr(worker, "calls_table", lambda: SimpleNamespace(get_item=lambda **kwargs: {"Item": {"status": "completed"}}))
     worker.process("CA2")

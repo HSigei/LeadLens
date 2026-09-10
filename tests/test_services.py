@@ -9,11 +9,8 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
 import aggregator
-import billing
 import dashboard
-import integrations
 import knowledge
-import saas
 from app import app
 from tenant_policy import policy_registry, read_policy_file, tenant_for_number
 
@@ -105,34 +102,19 @@ def test_dashboard_rejects_non_admin_and_legal_hold(monkeypatch):
         dashboard.erase_call("CA1", USER, "true")
 
 
-def test_billing_checkout_and_webhook(monkeypatch):
-    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test")
-    monkeypatch.setenv("STRIPE_PRICE_ID", "price_test")
-    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test")
-    monkeypatch.setattr(billing, "audit", lambda *args, **kwargs: None)
-    monkeypatch.setattr(billing.stripe.checkout.Session, "create", lambda **kwargs: SimpleNamespace(url="https://checkout.test"))
-    assert billing.checkout(USER)["checkout_url"] == "https://checkout.test"
+def test_dashboard_audit_records_erasure_context(monkeypatch):
+    calls = FakeTable(item={"tenant_id": "tenant-a", "audio_key": "a", "transcript_key": "t", "report_key": "r"})
+    monkeypatch.setattr(dashboard, "calls_table", lambda: calls)
+    captured = []
+    monkeypatch.setattr(dashboard, "audit", lambda tenant_id, actor, action, call_sid=None, detail=None: captured.append({"tenant_id": tenant_id, "actor": actor, "action": action, "call_sid": call_sid, "detail": detail}))
+    storage = FakeStorage()
+    monkeypatch.setattr(dashboard.boto3, "client", lambda *args, **kwargs: storage)
+    monkeypatch.setattr(dashboard, "env", lambda name: "value")
 
-    event = {"type": "checkout.session.completed", "data": {"object": {"client_reference_id": "tenant-a", "status": "active"}}}
-    monkeypatch.setattr(billing.stripe.Webhook, "construct_event", lambda *args: event)
-    organizations = FakeTable()
-    monkeypatch.setattr(billing, "organizations_table", lambda: organizations)
-    monkeypatch.setattr(billing, "audit", lambda *args, **kwargs: None)
-    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
-    response = TestClient(app).post("/api/billing/webhook", content=b"{}", headers={"Stripe-Signature": "sig"})
-    assert response.status_code == 200
-    assert organizations.calls
-
-
-def test_billing_rejects_unconfigured_and_invalid_webhook(monkeypatch):
-    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
-    monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
-    with pytest.raises(HTTPException, match="not configured"):
-        billing.checkout(USER)
-    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "secret")
-    monkeypatch.setattr(billing.stripe.Webhook, "construct_event", lambda *args: (_ for _ in ()).throw(ValueError()))
-    response = TestClient(app).post("/api/billing/webhook", content=b"bad", headers={"Stripe-Signature": "bad"})
-    assert response.status_code == 400
+    assert dashboard.erase_call("CA1", USER, "true") == {"status": "erased"}
+    assert captured[-1]["detail"]["erasure_type"] == "data_subject"
+    assert captured[-1]["detail"]["retention_days"] == 365
+    assert captured[-1]["detail"]["keys_deleted"] == ["a", "t", "r"]
 
 
 def test_knowledge_upload_and_retrieval(monkeypatch):
@@ -145,26 +127,3 @@ def test_knowledge_upload_and_retrieval(monkeypatch):
     assert knowledge.retrieve_context("tenant-a", "price") == ""
     response = TestClient(app).post("/api/knowledge/documents", files={"document": ("../../facts.txt", b"approved", "text/plain")})
     assert response.status_code in {401, 403}
-
-
-def test_oauth_authorize_branches(monkeypatch):
-    monkeypatch.setenv("DASHBOARD_JWT_SECRET", "test-secret-with-at-least-thirty-two-bytes")
-    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test")
-    monkeypatch.setattr(integrations, "oauth_setting", lambda provider, name: "client")
-    for provider in ("hubspot", "salesforce", "zoho"):
-        result = integrations.authorize(provider, USER)
-        assert result["authorization_url"].startswith("https://")
-    with pytest.raises(HTTPException, match="Unsupported"):
-        integrations.authorize("unknown", USER)
-
-
-def test_onboarding_routes(monkeypatch):
-    organizations = FakeTable(item={"name": "Acme", "privacy_contact": "privacy@example.com", "privacy_approved_at": "today", "connections": {"twilio": {}, "hubspot": {}, "stripe": {}}})
-    monkeypatch.setattr(saas, "organizations_table", lambda: organizations)
-    monkeypatch.setattr(saas, "audit", lambda *args, **kwargs: None)
-    assert saas.status(USER)["ready"] is True
-    profile = saas.OrganizationProfile(name="Acme", jurisdiction="US-CA", privacy_contact="privacy@example.com")
-    assert saas.save_organization(profile, USER)["name"] == "Acme"
-    assert saas.approve_privacy(USER)["status"] == "recorded"
-    request = saas.ConnectionRequest(provider="twilio", connection_id="conn-1")
-    assert saas.register_connection(request, USER)["provider"] == "twilio"

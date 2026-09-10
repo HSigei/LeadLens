@@ -40,6 +40,7 @@ locals {
     { name = "OPENAI_API_KEY", valueFrom = var.openai_api_key_arn },
     { name = "TWILIO_AUTH_TOKEN", valueFrom = var.twilio_secret_arn },
     { name = "DASHBOARD_JWT_SECRET", valueFrom = var.dashboard_jwt_secret_arn },
+    { name = "CALL_CENTER_WEBHOOK_SECRET", valueFrom = var.call_center_webhook_secret_arn },
   ]
 }
 

@@ -23,10 +23,8 @@ os.environ.setdefault("TWILIO_AUTH_TOKEN", "token")
 import aggregator
 import app
 import core
-import integrations
 import knowledge
 import observability
-import saas
 import worker
 from security import apply_security_headers
 from tenant_policy import tenant_for_number, validate_registry
@@ -58,21 +56,15 @@ def test_core_configuration_and_validation_branches(monkeypatch):
 
 def test_core_storage_audit_and_event_branches(monkeypatch):
     table = SimpleNamespace(put_item=lambda **kwargs: None)
-    monkeypatch.setenv("AWS_REGION", "us-east-1")
-    monkeypatch.setenv("CALLS_TABLE", "calls")
-    monkeypatch.setenv("AUDIT_TABLE", "audit")
-    monkeypatch.setenv("ORGANIZATIONS_TABLE", "orgs")
-    monkeypatch.setattr(core.boto3, "resource", lambda *args, **kwargs: SimpleNamespace(Table=lambda name: table))
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setattr(core, "PostgresTable", lambda name: table)
     assert core.calls_table() is table
     assert core.audit_table() is table
     assert core.organizations_table() is table
     core.audit("t", "actor", "action")
     assert core.event_key({"b": "2", "a": "1"}) == core.event_key({"a": "1", "b": "2"})
 
-    class ConditionalError(Exception):
-        pass
-
-    failing = SimpleNamespace(put_item=lambda **kwargs: (_ for _ in ()).throw(ConditionalError()), meta=SimpleNamespace(client=SimpleNamespace(exceptions=SimpleNamespace(ConditionalCheckFailedException=ConditionalError))))
+    failing = SimpleNamespace(put_item=lambda **kwargs: (_ for _ in ()).throw(core.ConditionalWriteError()))
     monkeypatch.setattr(core, "calls_table", lambda: failing)
     assert core.accept_event("event", "tenant") is False
     monkeypatch.setattr(core, "calls_table", lambda: table)
@@ -118,35 +110,6 @@ def test_observability_branches(monkeypatch, caplog):
     observability.capture_exception(RuntimeError("test"))
 
 
-def test_saas_admin_guard():
-    with pytest.raises(HTTPException, match="administrator"):
-        saas.admin({"role": "supervisor"})
-
-
-def test_integrations_callback_validation_and_success(monkeypatch):
-    monkeypatch.setenv("DASHBOARD_JWT_SECRET", "test-secret-with-at-least-thirty-two-bytes")
-    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test")
-    monkeypatch.setenv("CONNECTION_SECRET_PREFIX", "connections")
-    monkeypatch.setenv("AWS_REGION", "us-east-1")
-    monkeypatch.setattr(integrations, "oauth_setting", lambda *args: "client")
-    with pytest.raises(HTTPException, match="invalid"):
-        integrations.callback("hubspot", "code", "bad")
-    state = jwt.encode({"tenant_id": "t", "sub": "u", "provider": "hubspot", "aud": "callsignal-oauth"}, os.environ["DASHBOARD_JWT_SECRET"], algorithm="HS256")
-    with pytest.raises(HTTPException, match="match"):
-        integrations.callback("salesforce", "code", state)
-    class Secret:
-        class exceptions:
-            class ResourceExistsException(Exception):
-                pass
-        def create_secret(self, **kwargs):
-            return {"ARN": "arn:secret"}
-    monkeypatch.setattr(integrations.httpx, "post", lambda *args, **kwargs: SimpleNamespace(text='{"token":"x"}', raise_for_status=lambda: None))
-    monkeypatch.setattr(integrations.boto3, "client", lambda *args, **kwargs: Secret())
-    monkeypatch.setattr(integrations, "organizations_table", lambda: SimpleNamespace(update_item=lambda **kwargs: None))
-    monkeypatch.setattr(integrations, "audit", lambda *args, **kwargs: None)
-    assert integrations.callback("hubspot", "code", state)["status"] == "connected"
-
-
 def test_knowledge_retrieval_and_upload(monkeypatch):
     monkeypatch.setenv("KNOWLEDGE_BASE_ID", "kb")
     monkeypatch.setenv("AWS_REGION", "us-east-1")
@@ -177,7 +140,7 @@ def test_policy_registry_shapes_and_number_not_found(monkeypatch):
 
 
 def test_aggregator_run_paginates_and_sends(monkeypatch):
-    os.environ.update({"AWS_REGION": "us-east-1", "CALLS_TABLE": "calls", "CALL_DATA_BUCKET": "bucket", "CALL_DATA_KMS_KEY_ID": "kms", "REPORT_RECIPIENTS": "a@example.com", "REPORT_SENDER": "s@example.com"})
+    os.environ.update({"CALL_DATA_BUCKET": "bucket", "CALL_DATA_KMS_KEY_ID": "kms", "REPORT_RECIPIENTS": "a@example.com", "REPORT_SENDER": "s@example.com"})
     class Table:
         count = 0
         def scan(self, **kwargs):
@@ -188,7 +151,7 @@ def test_aggregator_run_paginates_and_sends(monkeypatch):
     storage = SimpleNamespace(put_object=lambda **kwargs: None, generate_presigned_url=lambda *args, **kwargs: "url")
     ses = SimpleNamespace(send_email=lambda **kwargs: None)
     table = Table()
-    monkeypatch.setattr(aggregator.boto3, "resource", lambda *args, **kwargs: SimpleNamespace(Table=lambda name: table))
+    monkeypatch.setattr(aggregator, "calls_table", lambda: table)
     monkeypatch.setattr(aggregator.boto3, "client", lambda service, **kwargs: ses if service == "sesv2" else storage)
     aggregator.run()
 

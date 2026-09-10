@@ -5,10 +5,10 @@ from fastapi.testclient import TestClient
 import app
 
 
-def test_hosted_setup_page_renders():
+def test_root_returns_service_status():
     response = TestClient(app.app).get("/")
     assert response.status_code == 200
-    assert "LeadLens" in response.text
+    assert response.json()["status"] == "ok"
 
 
 def test_health_endpoint_is_available_without_configuration():

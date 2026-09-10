@@ -8,9 +8,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import boto3
 import jwt
 from fastapi import HTTPException
+
+from database import ConditionalWriteError, PostgresTable
 
 
 PII_PATTERNS = (
@@ -52,15 +53,15 @@ def retention_expiry(days: int | None = None) -> int:
 
 
 def calls_table():
-    return boto3.resource("dynamodb", region_name=env("AWS_REGION")).Table(env("CALLS_TABLE"))
+    return PostgresTable("calls")
 
 
 def audit_table():
-    return boto3.resource("dynamodb", region_name=env("AWS_REGION")).Table(env("AUDIT_TABLE"))
+    return PostgresTable("audit")
 
 
 def organizations_table():
-    return boto3.resource("dynamodb", region_name=env("AWS_REGION")).Table(env("ORGANIZATIONS_TABLE"))
+    return PostgresTable("organizations")
 
 
 def audit(tenant_id: str, actor: str, action: str, call_sid: str | None = None, detail: dict[str, Any] | None = None) -> None:
@@ -76,7 +77,7 @@ def accept_event(event_id: str, tenant_id: str) -> bool:
     try:
         calls_table().put_item(Item={"call_sid": f"event#{event_id}", "tenant_id": tenant_id, "event_id": event_id, "status": "received", "expires_at": retention_expiry(7)}, ConditionExpression="attribute_not_exists(call_sid)")
         return True
-    except calls_table().meta.client.exceptions.ConditionalCheckFailedException:
+    except ConditionalWriteError:
         return False
 
 

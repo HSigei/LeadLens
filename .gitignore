@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .env
+LOCAL_NOTES.md
+local-notes/
 data/
 policies/tenants.json
 infra/*.tfvars

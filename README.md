@@ -4,22 +4,31 @@ This project implements a voice-call analysis workflow. Twilio handles inbound v
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [API reference](docs/API.md)
-- [Configuration reference](docs/CONFIGURATION.md)
-- [Quickstart](docs/QUICKSTART.md)
-- [Self-hosting with Terraform](docs/SELF_HOSTING.md)
-- [Integration guide](docs/INTEGRATIONS.md)
-- [Operations runbook](docs/OPERATIONS.md)
-- [Testing guide](docs/TESTING.md)
-- [Security architecture](docs/SECURITY_ARCHITECTURE.md)
-- [Global compliance](docs/GLOBAL_COMPLIANCE.md)
+Detailed docs are kept locally in `local-notes/` (gitignored, not part of this repo). See that folder on your own machine for architecture, API, configuration, integration, operations, security, compliance, and testing notes.
+
+## Database integration
+
+The application uses PostgreSQL for calls, organizations, and audit events when `DATABASE_URL` is configured. This is the recommended production path for relational reporting, audit queries, retention workflows, and deduplication.
+
+```text
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE
+```
+
+The application creates the initial PostgreSQL tables and indexes on first connection:
+
+- `calls`
+- `organizations`
+- `audit_events`
+
+Use a managed PostgreSQL service such as Aurora PostgreSQL, keep the database in private subnets, restrict access to the application security group, enable encryption and backups, and store `DATABASE_URL` in Secrets Manager. Do not commit the connection string.
+
+`DATABASE_URL` is required in every environment; the application will not start without it.
 
 ## Required infrastructure
 
 - A Twilio Programmable Voice number. Set its inbound webhook to `https://YOUR_DOMAIN/webhooks/twilio/voice`. Enable call recording and set its recording status callback to `https://YOUR_DOMAIN/webhooks/twilio/recording`.
 - A private S3 bucket with Block Public Access, versioning, lifecycle retention, and SSE-KMS enabled.
-- DynamoDB table with partition key `call_sid` (String), point-in-time recovery enabled.
+- PostgreSQL database for calls, organizations, and audit events. Set `DATABASE_URL` in the runtime secret store.
 - SQS queue with a dead-letter queue. Run `worker.py` as a separate ECS/Fargate service or worker process.
 - SES verified sender and recipients. Store all secrets in AWS Secrets Manager or the hosting platform's secret store.
 
@@ -31,7 +40,7 @@ Copy the names in `.env.example` into your secret store with real values. Instal
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-For a local container run, copy `.env.example` to `.env`, provide non-production values, then run `docker compose up --build`. The onboarding page is available at `http://localhost:8080`. The unauthenticated health endpoint works without provider credentials; live voice, data, and billing paths require their configured services.
+For a local container run, copy `.env.example` to `.env`, provide non-production values, then run `docker compose up --build`. The unauthenticated health endpoint at `http://localhost:8080/healthz` works without provider credentials; live voice and data paths require their configured services.
 
 Run the local verification suite with:
 
@@ -83,4 +92,6 @@ Schedule the master workbook job once daily through the platform scheduler:
 
 Before connecting a client number, confirm consent rules, disclosure language, retention and deletion policy, permitted AI uses, escalation paths, and the approved knowledge base. Ensure the AWS runtime role follows least privilege, CloudTrail logging is enabled, S3 has no public access, and the SQS DLQ is monitored. Every webhook is signature-validated before call data is accepted.
 
-The generated report is a per-call workbook. DynamoDB retains the analysis records so the scheduled aggregation job creates daily, weekly, and client-wide master workbooks without unsafe concurrent edits to an Excel file.
+> **Operational note:** Worker retries are bounded and failed calls retain retry/error metadata. Data-subject erasure records the deleted storage keys and retention period in the audit trail. API routes are rate-limited, with stricter limits for privacy and knowledge-management endpoints.
+
+The generated report is a per-call workbook. The selected database retains call metadata and analysis records so the scheduled aggregation job can create daily, weekly, and client-wide master workbooks without unsafe concurrent edits to an Excel file.
