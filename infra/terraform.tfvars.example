@@ -7,13 +7,11 @@ vpc_id = "vpc-replace-me"
 public_subnet_ids = ["subnet-replace-me", "subnet-replace-me"]
 private_subnet_ids = ["subnet-replace-me", "subnet-replace-me"]
 public_base_url = "https://calls.example.com"
-twilio_account_sid = "ACreplace-me"
 report_sender = "reports@example.com"
 report_recipients = "supervisor@example.com,management@example.com"
 alert_email = "oncall@example.com"
 dashboard_jwt_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/dashboard-jwt"
-openai_api_key_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/openai"
-twilio_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/twilio"
+groq_api_key_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/groq"
 call_center_webhook_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/call-center-webhook"
 tenant_policy_json = <<-JSON
 {

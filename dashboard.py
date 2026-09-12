@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 from typing import Annotated
 
-import boto3
 from fastapi import APIRouter, Depends, Header, HTTPException
 
-from core import audit, calls_table, decode_access_token, env
+from core import audit, calls_table, decode_access_token, env, organizations_table
+from storage import storage_client
 
 
 router = APIRouter(prefix="/api", tags=["supervisor"])
@@ -31,7 +31,7 @@ def report_url(call_sid: str, user: dict[str, str] = Depends(principal)) -> dict
     call = result.get("Item")
     if not call or call.get("tenant_id") != user["tenant_id"] or not call.get("report_key"):
         raise HTTPException(404, "Report not found.")
-    url = boto3.client("s3", region_name=env("AWS_REGION")).generate_presigned_url("get_object", Params={"Bucket": env("CALL_DATA_BUCKET"), "Key": call["report_key"]}, ExpiresIn=900)
+    url = storage_client().generate_presigned_url("get_object", Params={"Bucket": env("CALL_DATA_BUCKET"), "Key": call["report_key"]}, ExpiresIn=900)
     audit(user["tenant_id"], user["sub"], "report_download_requested", call_sid)
     return {"url": url, "expires_in_seconds": "900"}
 
@@ -44,8 +44,10 @@ def metrics(user: dict[str, str] = Depends(principal)) -> dict:
     total = len(completed)
     resolved = sum(bool(call.get("analysis", {}).get("issue_resolved")) for call in completed)
     performance = sum(int(call.get("analysis", {}).get("agent_performance_score", 0)) for call in completed)
+    booked = sum(bool(call.get("booking_id")) for call in completed)
+    guidance = organizations_table().get_item(Key={"tenant_id": user["tenant_id"]}).get("Item", {}).get("prompt_guidance", "")
     audit(user["tenant_id"], user["sub"], "dashboard_metrics_read")
-    return {"calls_processed": total, "resolution_rate": round(resolved * 100 / total, 1) if total else 0, "average_performance": round(performance / total, 1) if total else 0}
+    return {"calls_processed": total, "resolution_rate": round(resolved * 100 / total, 1) if total else 0, "average_performance": round(performance / total, 1) if total else 0, "booking_conversion_rate": round(booked * 100 / total, 1) if total else 0, "prompt_guidance": guidance}
 
 
 @router.delete("/privacy/calls/{call_sid}")
@@ -57,7 +59,7 @@ def erase_call(call_sid: str, user: dict[str, str] = Depends(principal), x_data_
         raise HTTPException(404, "Call not found.")
     if call.get("legal_hold"):
         raise HTTPException(409, "Call is subject to a legal hold.")
-    storage = boto3.client("s3", region_name=env("AWS_REGION"))
+    storage = storage_client()
     deleted_keys: list[str] = []
     for key_name in ("audio_key", "transcript_key", "report_key"):
         if call.get(key_name):

@@ -100,7 +100,10 @@ def decode_access_token(token: str) -> dict[str, str]:
     return {"tenant_id": tenant_id, "role": role, "sub": claims["sub"]}
 
 
-def validate_analysis(value: Any) -> dict[str, Any]:
+CUSTOM_FIELD_TYPES = {"boolean": bool, "text": str}
+
+
+def validate_analysis(value: Any, custom_fields: list[dict[str, str]] | None = None) -> dict[str, Any]:
     required = {"keywords": list, "objections": list, "sentiment": str, "sentiment_score": int, "agent_performance_score": int, "issue_resolved": bool, "missed_opportunities": list, "training_recommendations": list, "revenue_opportunity": str, "customer_experience_notes": str}
     if not isinstance(value, dict) or any(not isinstance(value.get(key), kind) for key, kind in required.items()):
         raise ValueError("Model returned an invalid analysis schema.")
@@ -109,6 +112,14 @@ def validate_analysis(value: Any) -> dict[str, Any]:
     for score in (value["sentiment_score"], value["agent_performance_score"]):
         if not 0 <= score <= 100:
             raise ValueError("Model returned an out-of-range score.")
+    custom = value.get("custom") if isinstance(value.get("custom"), dict) else {}
+    validated_custom = {}
+    for field in custom_fields or []:
+        name, kind = field["name"], CUSTOM_FIELD_TYPES[field.get("type", "text")]
+        if not isinstance(custom.get(name), kind):
+            raise ValueError(f"Model returned an invalid value for tenant custom field '{name}'.")
+        validated_custom[name] = custom[name]
+    value["custom"] = validated_custom
     return value
 
 

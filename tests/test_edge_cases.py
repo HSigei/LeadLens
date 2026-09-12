@@ -16,9 +16,7 @@ os.environ.setdefault("CALL_DATA_BUCKET", "bucket")
 os.environ.setdefault("CALL_DATA_KMS_KEY_ID", "kms")
 os.environ.setdefault("REPORT_RECIPIENTS", "a@example.com")
 os.environ.setdefault("REPORT_SENDER", "s@example.com")
-os.environ.setdefault("OPENAI_API_KEY", "test-key")
-os.environ.setdefault("TWILIO_ACCOUNT_SID", "AC")
-os.environ.setdefault("TWILIO_AUTH_TOKEN", "token")
+os.environ.setdefault("GROQ_API_KEY", "test-key")
 
 import aggregator
 import app
@@ -43,6 +41,12 @@ def test_core_configuration_and_validation_branches(monkeypatch):
     valid = {"keywords": [], "objections": [], "sentiment": "mixed", "sentiment_score": 50, "agent_performance_score": 50, "issue_resolved": False, "missed_opportunities": [], "training_recommendations": [], "revenue_opportunity": "medium", "customer_experience_notes": ""}
     with pytest.raises(ValueError, match="unsupported"):
         core.validate_analysis({**valid, "sentiment": "unknown"})
+    assert core.validate_analysis(valid)["custom"] == {}
+    custom_fields = [{"name": "kyc_verified", "type": "boolean"}]
+    with pytest.raises(ValueError, match="custom field"):
+        core.validate_analysis(valid, custom_fields)
+    with_custom = core.validate_analysis({**valid, "custom": {"kyc_verified": True, "extra": "dropped"}}, custom_fields)
+    assert with_custom["custom"] == {"kyc_verified": True}
     with pytest.raises(HTTPException, match="missing"):
         core.validate_tenant_compliance({})
     complete = {"tenant_id": "t", "escalation_number": "+1", "privacy_notice_version": "v1", "lawful_basis": "wrong", "jurisdiction": "US", "processing_region": "us", "cross_border_safeguard": "none"}
@@ -80,14 +84,7 @@ def test_core_token_branches(monkeypatch):
         core.decode_access_token(token)
 
 
-def test_app_helpers_and_security(monkeypatch):
-    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
-    with pytest.raises(HTTPException, match="unavailable"):
-        app.setting("PUBLIC_BASE_URL")
-    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test/")
-    request = Request({"type": "http", "method": "GET", "path": "/x", "query_string": b"a=1", "headers": [], "scheme": "https", "server": ("test", 443), "client": ("test", 1)})
-    assert app.public_url(request) == "https://example.test/x?a=1"
-    assert "Hello" not in app.agent_prompt() or len(app.agent_prompt()) > 10
+def test_app_security_rejects_large_requests(monkeypatch):
     response = TestClient(app.app).get("/healthz", headers={"content-length": "99999999"})
     assert response.status_code == 413
 
@@ -111,20 +108,32 @@ def test_observability_branches(monkeypatch, caplog):
 
 
 def test_knowledge_retrieval_and_upload(monkeypatch):
-    monkeypatch.setenv("KNOWLEDGE_BASE_ID", "kb")
-    monkeypatch.setenv("AWS_REGION", "us-east-1")
-    response = {"retrievalResults": [{"content": {"text": "one"}}, {"content": {"text": "two"}}, {"content": {}}]}
-    monkeypatch.setattr(knowledge.boto3, "client", lambda *args, **kwargs: SimpleNamespace(retrieve=lambda **kwargs: response))
-    monkeypatch.setattr(knowledge, "env", lambda name: "value")
+    class FakeCollection:
+        def __init__(self):
+            self.rows = []
+
+        def upsert(self, ids, documents, metadatas):
+            self.rows.extend(zip(ids, documents, metadatas))
+
+        def count(self):
+            return len(self.rows)
+
+        def query(self, query_texts, n_results, where):
+            matched = [document for _, document, metadata in self.rows if metadata.get("tenant_id") == where.get("tenant_id")]
+            return {"documents": [matched[:n_results]]}
+
+    collection = FakeCollection()
+    collection.upsert(ids=["a:0", "a:1"], documents=["one", "two"], metadatas=[{"tenant_id": "tenant"}, {"tenant_id": "tenant"}])
+    monkeypatch.setattr(knowledge, "_collection", lambda: collection)
     assert knowledge.retrieve_context("tenant", "question") == "one\n\ntwo"
     class Upload:
         filename = "../facts.txt"
         content_type = "text/plain"
         async def read(self, limit):
-            return b"facts"
-    monkeypatch.setattr(knowledge.boto3, "client", lambda *args, **kwargs: SimpleNamespace(put_object=lambda **kwargs: None, start_ingestion_job=lambda **kwargs: None))
+            return b"approved facts about the product"
+    monkeypatch.delenv("CALL_DATA_BUCKET", raising=False)
     monkeypatch.setattr(knowledge, "audit", lambda *args, **kwargs: None)
-    assert asyncio.run(knowledge.upload_document(Upload(), {"tenant_id": "t", "sub": "u", "role": "admin"}))["status"] == "ingestion_started"
+    assert asyncio.run(knowledge.upload_document(Upload(), {"tenant_id": "t", "sub": "u", "role": "admin"}))["status"] == "indexed"
 
 
 def test_policy_registry_shapes_and_number_not_found(monkeypatch):

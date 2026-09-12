@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from tenant_policy import validate_registry
+from tenant_policy import tenant_by_id, validate_registry
 
 
 def policy(**overrides):
@@ -37,3 +37,18 @@ def test_policy_requires_documented_approval():
     del invalid["tenants"]["+15551234567"]["approved_by"]
     with pytest.raises(ValueError, match="documented approvals"):
         validate_registry(invalid)
+
+
+def test_analysis_fields_accepts_valid_and_rejects_invalid_entries():
+    validate_registry(policy(analysis_fields=[{"name": "kyc_verified", "type": "boolean"}]))
+    with pytest.raises(ValueError, match="analysis_fields"):
+        validate_registry(policy(analysis_fields=[{"type": "boolean"}]))
+    with pytest.raises(ValueError, match="analysis_fields"):
+        validate_registry(policy(analysis_fields=[{"name": "x", "type": "number"}]))
+
+
+def test_tenant_by_id_finds_and_misses(monkeypatch):
+    monkeypatch.setenv("TENANT_ROUTING_JSON", json.dumps(policy()))
+    monkeypatch.delenv("TENANT_POLICY_FILE", raising=False)
+    assert tenant_by_id("tenant-a")["tenant_id"] == "tenant-a"
+    assert tenant_by_id("unknown-tenant") is None

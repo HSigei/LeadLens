@@ -80,13 +80,14 @@ def test_tenant_policy_reports_invalid_file(tmp_path):
 def test_dashboard_routes_cover_metrics_report_and_erasure(monkeypatch):
     calls = FakeTable(items=[{"status": "completed", "analysis": {"issue_resolved": True, "agent_performance_score": 80}}])
     monkeypatch.setattr(dashboard, "calls_table", lambda: calls)
+    monkeypatch.setattr(dashboard, "organizations_table", lambda: FakeTable(item={"prompt_guidance": "Ask about warranty early."}))
     monkeypatch.setattr(dashboard, "audit", lambda *args, **kwargs: None)
     assert dashboard.list_calls(USER, limit=500)["items"]
-    assert dashboard.metrics(USER) == {"calls_processed": 1, "resolution_rate": 100.0, "average_performance": 80.0}
+    assert dashboard.metrics(USER) == {"calls_processed": 1, "resolution_rate": 100.0, "average_performance": 80.0, "booking_conversion_rate": 0.0, "prompt_guidance": "Ask about warranty early."}
 
     calls.item = {"tenant_id": "tenant-a", "report_key": "reports/CA1.xlsx", "audio_key": "a", "transcript_key": "t"}
     storage = FakeStorage()
-    monkeypatch.setattr(dashboard.boto3, "client", lambda *args, **kwargs: storage)
+    monkeypatch.setattr(dashboard, "storage_client", lambda: storage)
     monkeypatch.setattr(dashboard, "env", lambda name: "value")
     assert dashboard.report_url("CA1", USER)["expires_in_seconds"] == "900"
     assert dashboard.erase_call("CA1", USER, "true") == {"status": "erased"}
@@ -108,7 +109,7 @@ def test_dashboard_audit_records_erasure_context(monkeypatch):
     captured = []
     monkeypatch.setattr(dashboard, "audit", lambda tenant_id, actor, action, call_sid=None, detail=None: captured.append({"tenant_id": tenant_id, "actor": actor, "action": action, "call_sid": call_sid, "detail": detail}))
     storage = FakeStorage()
-    monkeypatch.setattr(dashboard.boto3, "client", lambda *args, **kwargs: storage)
+    monkeypatch.setattr(dashboard, "storage_client", lambda: storage)
     monkeypatch.setattr(dashboard, "env", lambda name: "value")
 
     assert dashboard.erase_call("CA1", USER, "true") == {"status": "erased"}
@@ -118,10 +119,11 @@ def test_dashboard_audit_records_erasure_context(monkeypatch):
 
 
 def test_knowledge_upload_and_retrieval(monkeypatch):
-    storage = FakeStorage()
-    bedrock = SimpleNamespace(start_ingestion_job=lambda **kwargs: {"jobId": "job"})
-    monkeypatch.setattr(knowledge.boto3, "client", lambda service, **kwargs: bedrock if service == "bedrock-agent" else storage)
-    monkeypatch.setattr(knowledge, "env", lambda name: {"AWS_REGION": "us-east-1", "CALL_DATA_BUCKET": "bucket", "CALL_DATA_KMS_KEY_ID": "key", "KNOWLEDGE_BASE_ID": "kb", "KNOWLEDGE_DATA_SOURCE_ID": "ds"}[name])
+    class FakeCollection:
+        def count(self):
+            return 0
+
+    monkeypatch.setattr(knowledge, "_collection", lambda: FakeCollection())
     monkeypatch.setattr(knowledge, "audit", lambda *args, **kwargs: None)
     assert knowledge.safe_filename("../../hello world.txt") == "hello_world.txt"
     assert knowledge.retrieve_context("tenant-a", "price") == ""

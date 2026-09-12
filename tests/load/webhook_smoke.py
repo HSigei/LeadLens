@@ -1,7 +1,7 @@
 """Synthetic smoke/load probe for a non-production deployment only.
 
 Run only against a sandbox URL after setting LOAD_TEST_TOKEN to an approved
-gateway token. This deliberately does not generate real Twilio calls.
+gateway token. This deliberately does not generate real Vapi calls.
 """
 from __future__ import annotations
 

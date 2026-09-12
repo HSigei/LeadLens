@@ -15,7 +15,7 @@ from dashboard import principal
 
 router = APIRouter(prefix="/api/call-center", tags=["call-center integration"])
 
-IntegrationMode = Literal["post_call_webhook", "twilio_routing", "sip_media_stream"]
+IntegrationMode = Literal["post_call_webhook", "sip_media_stream"]
 
 
 class IntegrationProfile(BaseModel):

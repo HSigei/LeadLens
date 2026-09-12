@@ -14,6 +14,8 @@ from openpyxl.styles import Font, PatternFill
 
 from core import audit, calls_table, redact_pii, retention_expiry, utc_now, validate_analysis
 from observability import capture_exception, configure_logging, log_event
+from storage import storage_client
+from tenant_policy import tenant_by_id
 
 
 configure_logging()
@@ -26,9 +28,9 @@ def env(name: str) -> str:
     return value
 
 
-REGION = env("AWS_REGION")
+REGION = os.getenv("AWS_REGION", "us-east-1")
 MAX_RETRY_COUNT = int(os.getenv("WORKER_MAX_RETRY_COUNT", "5"))
-s3 = boto3.client("s3", region_name=REGION)
+s3 = storage_client()
 sqs = boto3.client("sqs", region_name=REGION)
 ses = boto3.client("sesv2", region_name=REGION)
 
@@ -56,29 +58,33 @@ def handle_processing_failure(call_sid: str, error: Exception) -> bool:
     return True
 
 
-def openai_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {env('OPENAI_API_KEY')}"}
+def groq_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {env('GROQ_API_KEY')}"}
 
 
 def transcribe(audio: bytes, filename: str) -> str:
-    response = httpx.post("https://api.openai.com/v1/audio/transcriptions", headers=openai_headers(), files={"file": (filename, audio, "audio/mpeg")}, data={"model": os.getenv("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")}, timeout=120)
+    response = httpx.post("https://api.groq.com/openai/v1/audio/transcriptions", headers=groq_headers(), files={"file": (filename, audio, "audio/mpeg")}, data={"model": os.getenv("GROQ_TRANSCRIPTION_MODEL", "whisper-large-v3-turbo")}, timeout=120)
     response.raise_for_status()
     return response.json()["text"].strip()
 
 
-def analyze(transcript: str) -> dict:
+def analyze(transcript: str, custom_fields: list[dict[str, str]] | None = None) -> dict:
+    custom_fields = custom_fields or []
     prompt = """Analyze this call-center transcript. Return JSON only with: keywords (string array), objections (string array), sentiment (positive|mixed|negative), sentiment_score (integer 0-100), agent_performance_score (integer 0-100), issue_resolved (boolean), missed_opportunities (string array), training_recommendations (string array), revenue_opportunity (low|medium|high), customer_experience_notes (string). Do not infer facts absent from the transcript."""
-    response = httpx.post("https://api.openai.com/v1/chat/completions", headers={**openai_headers(), "Content-Type": "application/json"}, json={"model": os.getenv("OPENAI_ANALYSIS_MODEL", "gpt-4.1-mini"), "response_format": {"type": "json_object"}, "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": transcript}]}, timeout=90)
+    if custom_fields:
+        field_lines = "\n".join(f"- {field['name']} ({field.get('type', 'text')}): {field.get('prompt', field['name'])}" for field in custom_fields)
+        prompt += f"\n\nAlso return a top-level \"custom\" object with exactly these additional fields, inferred only from the transcript:\n{field_lines}"
+    response = httpx.post("https://api.groq.com/openai/v1/chat/completions", headers={**groq_headers(), "Content-Type": "application/json"}, json={"model": os.getenv("GROQ_ANALYSIS_MODEL", "llama-3.3-70b-versatile"), "response_format": {"type": "json_object"}, "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": transcript}]}, timeout=90)
     response.raise_for_status()
-    return validate_analysis(json.loads(response.json()["choices"][0]["message"]["content"]))
+    return validate_analysis(json.loads(response.json()["choices"][0]["message"]["content"]), custom_fields)
 
 
 def workbook_bytes(call: dict, analysis: dict) -> bytes:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Call Analysis"
-    sheet.append(["Call ID", "Processed At", "Sentiment", "Performance", "Resolved", "Revenue Opportunity", "Keywords", "Objections", "Missed Opportunities", "Training Recommendations", "Customer Experience"])
-    sheet.append([call["call_sid"], datetime.now(UTC).isoformat(), analysis["sentiment"], analysis["agent_performance_score"], analysis["issue_resolved"], analysis["revenue_opportunity"], "; ".join(analysis["keywords"]), "; ".join(analysis["objections"]), " ".join(analysis["missed_opportunities"]), " ".join(analysis["training_recommendations"]), analysis["customer_experience_notes"]])
+    sheet.append(["Call ID", "Processed At", "Sentiment", "Performance", "Resolved", "Revenue Opportunity", "Keywords", "Objections", "Missed Opportunities", "Training Recommendations", "Customer Experience", "Custom Fields"])
+    sheet.append([call["call_sid"], datetime.now(UTC).isoformat(), analysis["sentiment"], analysis["agent_performance_score"], analysis["issue_resolved"], analysis["revenue_opportunity"], "; ".join(analysis["keywords"]), "; ".join(analysis["objections"]), " ".join(analysis["missed_opportunities"]), " ".join(analysis["training_recommendations"]), analysis["customer_experience_notes"], "; ".join(f"{name}: {field_value}" for name, field_value in analysis.get("custom", {}).items())])
     for cell in sheet[1]:
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="0B525B")
@@ -90,7 +96,10 @@ def workbook_bytes(call: dict, analysis: dict) -> bytes:
 
 
 def put_encrypted(key: str, content: bytes, content_type: str) -> None:
-    s3.put_object(Bucket=env("CALL_DATA_BUCKET"), Key=key, Body=content, ServerSideEncryption="aws:kms", SSEKMSKeyId=env("CALL_DATA_KMS_KEY_ID"), ContentType=content_type, Metadata={"retention-expires-at": str(retention_expiry())})
+    options = {"Bucket": env("CALL_DATA_BUCKET"), "Key": key, "Body": content, "ContentType": content_type, "Metadata": {"retention-expires-at": str(retention_expiry())}}
+    if kms_key_id := os.getenv("CALL_DATA_KMS_KEY_ID"):
+        options.update({"ServerSideEncryption": "aws:kms", "SSEKMSKeyId": kms_key_id})
+    s3.put_object(**options)
 
 
 def sync_crm(call: dict, analysis: dict) -> None:
@@ -111,13 +120,16 @@ def process(call_sid: str) -> None:
         return
     if call.get("tenant_id") is None or call.get("recording_url") is None:
         raise ValueError(f"Call state is incomplete before processing: {call_sid}")
-    recording = httpx.get(call["recording_url"] + ".mp3", auth=(env("TWILIO_ACCOUNT_SID"), env("TWILIO_AUTH_TOKEN")), timeout=120)
+    if call.get("provider") != "vapi":
+        raise ValueError(f"Unsupported recording provider for worker: {call.get('provider')}")
+    recording = httpx.get(call["recording_url"], timeout=120)
     recording.raise_for_status()
     tenant_id = call["tenant_id"]
     audio_key = f"tenants/{tenant_id}/recordings/{call_sid}/recording.mp3"
     put_encrypted(audio_key, recording.content, "audio/mpeg")
     transcript = transcribe(recording.content, f"{call_sid}.mp3")
-    analysis = analyze(redact_pii(transcript))
+    custom_fields = (tenant_by_id(tenant_id) or {}).get("analysis_fields", [])
+    analysis = analyze(redact_pii(transcript), custom_fields)
     transcript_key = f"tenants/{tenant_id}/transcripts/{call_sid}/transcript.json"
     stored_transcript = transcript if os.getenv("STORE_RAW_TRANSCRIPTS", "false").lower() == "true" else redact_pii(transcript)
     put_encrypted(transcript_key, json.dumps({"transcript": stored_transcript, "analysis": analysis}).encode(), "application/json")
@@ -133,6 +145,8 @@ def process(call_sid: str) -> None:
 
 
 def run() -> None:
+    if os.getenv("QUEUE_MODE", "sqs") == "inline":
+        raise RuntimeError("worker.py must not run when QUEUE_MODE=inline.")
     while True:
         try:
             messages = sqs.receive_message(QueueUrl=env("PROCESSING_QUEUE_URL"), MaxNumberOfMessages=1, WaitTimeSeconds=20).get("Messages", [])

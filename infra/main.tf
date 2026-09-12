@@ -28,7 +28,6 @@ locals {
     { name = "ORGANIZATIONS_TABLE", value = aws_dynamodb_table.organizations.name },
     { name = "PROCESSING_QUEUE_URL", value = aws_sqs_queue.processing.url },
     { name = "PUBLIC_BASE_URL", value = var.public_base_url },
-    { name = "TWILIO_ACCOUNT_SID", value = var.twilio_account_sid },
     { name = "TENANT_ROUTING_JSON", value = var.tenant_policy_json },
     { name = "REPORT_SENDER", value = var.report_sender },
     { name = "REPORT_RECIPIENTS", value = var.report_recipients },
@@ -37,8 +36,7 @@ locals {
     { name = "SENTRY_TRACES_SAMPLE_RATE", value = var.sentry_traces_sample_rate },
   ]
   application_secrets = [
-    { name = "OPENAI_API_KEY", valueFrom = var.openai_api_key_arn },
-    { name = "TWILIO_AUTH_TOKEN", valueFrom = var.twilio_secret_arn },
+    { name = "GROQ_API_KEY", valueFrom = var.groq_api_key_arn },
     { name = "DASHBOARD_JWT_SECRET", valueFrom = var.dashboard_jwt_secret_arn },
     { name = "CALL_CENTER_WEBHOOK_SECRET", valueFrom = var.call_center_webhook_secret_arn },
   ]
@@ -219,7 +217,7 @@ resource "aws_iam_role_policy_attachment" "execution" {
 resource "aws_iam_role_policy" "execution_secrets" {
   name = "read-task-secrets"
   role = aws_iam_role.execution.id
-  policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = [var.dashboard_jwt_secret_arn, var.openai_api_key_arn, var.twilio_secret_arn] }] })
+  policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = [var.dashboard_jwt_secret_arn, var.groq_api_key_arn] }] })
 }
 
 resource "aws_iam_role_policy" "task" {
@@ -230,7 +228,7 @@ resource "aws_iam_role_policy" "task" {
     { Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], Resource = ["${aws_s3_bucket.data.arn}/*"] },
     { Effect = "Allow", Action = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:SendMessage", "sqs:GetQueueAttributes"], Resource = aws_sqs_queue.processing.arn },
     { Effect = "Allow", Action = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"], Resource = aws_kms_key.data.arn },
-    { Effect = "Allow", Action = ["ses:SendEmail", "bedrock:Retrieve", "bedrock:StartIngestionJob"], Resource = "*" },
+    { Effect = "Allow", Action = ["ses:SendEmail"], Resource = "*" },
     { Effect = "Allow", Action = ["secretsmanager:GetSecretValue", "secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:DescribeSecret"], Resource = "*" }
   ] })
 }

@@ -27,11 +27,11 @@ def master_workbook(calls: list[dict]) -> bytes:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Call Intelligence"
-    headers = ["Call SID", "Status", "Processed", "Sentiment", "Performance", "Resolved", "Revenue Opportunity", "Keywords", "Objections", "Missed Opportunities", "Training Recommendations"]
+    headers = ["Call SID", "Status", "Processed", "Sentiment", "Performance", "Resolved", "Revenue Opportunity", "Keywords", "Objections", "Missed Opportunities", "Training Recommendations", "Custom Fields"]
     sheet.append(headers)
     for call in calls:
         analysis = call.get("analysis", {})
-        sheet.append([call.get("call_sid"), call.get("status"), call.get("updated_at"), analysis.get("sentiment"), excel_value(analysis.get("agent_performance_score")), analysis.get("issue_resolved"), analysis.get("revenue_opportunity"), "; ".join(analysis.get("keywords", [])), "; ".join(analysis.get("objections", [])), " ".join(analysis.get("missed_opportunities", [])), " ".join(analysis.get("training_recommendations", []))])
+        sheet.append([call.get("call_sid"), call.get("status"), call.get("updated_at"), analysis.get("sentiment"), excel_value(analysis.get("agent_performance_score")), analysis.get("issue_resolved"), analysis.get("revenue_opportunity"), "; ".join(analysis.get("keywords", [])), "; ".join(analysis.get("objections", [])), " ".join(analysis.get("missed_opportunities", [])), " ".join(analysis.get("training_recommendations", [])), "; ".join(f"{name}: {field_value}" for name, field_value in analysis.get("custom", {}).items())])
     for cell in sheet[1]:
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="0B525B")
