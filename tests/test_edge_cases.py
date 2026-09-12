@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 from types import SimpleNamespace
@@ -21,7 +20,6 @@ os.environ.setdefault("GROQ_API_KEY", "test-key")
 import aggregator
 import app
 import core
-import knowledge
 import observability
 import worker
 from security import apply_security_headers
@@ -105,35 +103,6 @@ def test_observability_branches(monkeypatch, caplog):
     monkeypatch.delenv("SENTRY_DSN", raising=False)
     observability.initialize_error_tracking()
     observability.capture_exception(RuntimeError("test"))
-
-
-def test_knowledge_retrieval_and_upload(monkeypatch):
-    class FakeCollection:
-        def __init__(self):
-            self.rows = []
-
-        def upsert(self, ids, documents, metadatas):
-            self.rows.extend(zip(ids, documents, metadatas))
-
-        def count(self):
-            return len(self.rows)
-
-        def query(self, query_texts, n_results, where):
-            matched = [document for _, document, metadata in self.rows if metadata.get("tenant_id") == where.get("tenant_id")]
-            return {"documents": [matched[:n_results]]}
-
-    collection = FakeCollection()
-    collection.upsert(ids=["a:0", "a:1"], documents=["one", "two"], metadatas=[{"tenant_id": "tenant"}, {"tenant_id": "tenant"}])
-    monkeypatch.setattr(knowledge, "_collection", lambda: collection)
-    assert knowledge.retrieve_context("tenant", "question") == "one\n\ntwo"
-    class Upload:
-        filename = "../facts.txt"
-        content_type = "text/plain"
-        async def read(self, limit):
-            return b"approved facts about the product"
-    monkeypatch.delenv("CALL_DATA_BUCKET", raising=False)
-    monkeypatch.setattr(knowledge, "audit", lambda *args, **kwargs: None)
-    assert asyncio.run(knowledge.upload_document(Upload(), {"tenant_id": "t", "sub": "u", "role": "admin"}))["status"] == "indexed"
 
 
 def test_policy_registry_shapes_and_number_not_found(monkeypatch):

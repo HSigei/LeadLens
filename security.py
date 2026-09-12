@@ -23,7 +23,7 @@ def check_rate_limit(client_key: str, route: str, limit: int | None = None, wind
     window = window_seconds or RATE_LIMIT_WINDOW_SECONDS
     bucket = RATE_LIMIT_BUCKETS[bucket_key]
     bucket[:] = [stamp for stamp in bucket if now - stamp < window]
-    max_requests = limit if limit is not None else RATE_LIMITS["admin" if route.startswith("/api/privacy/") or route.startswith("/api/knowledge/") else "default"]
+    max_requests = limit if limit is not None else RATE_LIMITS["admin" if route.startswith("/api/privacy/") else "default"]
     if len(bucket) >= max_requests:
         raise HTTPException(429, "Too many requests. Please try again later.")
     bucket.append(now)

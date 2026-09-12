@@ -8,7 +8,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - run: pip install -r requirements-dev.txt
-      - run: python -m py_compile app.py worker.py aggregator.py dashboard.py core.py knowledge.py tenant_policy.py
+      - run: python -m py_compile app.py worker.py aggregator.py dashboard.py core.py tenant_policy.py
       - run: pytest -q --cov=. --cov-report=term-missing
       - run: pip-audit -r requirements.txt
   terraform:

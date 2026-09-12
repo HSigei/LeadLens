@@ -10,7 +10,6 @@ from openpyxl import load_workbook
 
 import aggregator
 import dashboard
-import knowledge
 from app import app
 from tenant_policy import policy_registry, read_policy_file, tenant_for_number
 
@@ -117,15 +116,3 @@ def test_dashboard_audit_records_erasure_context(monkeypatch):
     assert captured[-1]["detail"]["retention_days"] == 365
     assert captured[-1]["detail"]["keys_deleted"] == ["a", "t", "r"]
 
-
-def test_knowledge_upload_and_retrieval(monkeypatch):
-    class FakeCollection:
-        def count(self):
-            return 0
-
-    monkeypatch.setattr(knowledge, "_collection", lambda: FakeCollection())
-    monkeypatch.setattr(knowledge, "audit", lambda *args, **kwargs: None)
-    assert knowledge.safe_filename("../../hello world.txt") == "hello_world.txt"
-    assert knowledge.retrieve_context("tenant-a", "price") == ""
-    response = TestClient(app).post("/api/knowledge/documents", files={"document": ("../../facts.txt", b"approved", "text/plain")})
-    assert response.status_code in {401, 403}

@@ -86,7 +86,7 @@ Copy the names in `.env.example` into your secret store with real values. Instal
 
 ## Free local testing
 
-You can run the inbound call path without AWS. Create a free PostgreSQL database in Neon or Supabase and set `DATABASE_URL`. Create a Cloudflare R2 bucket and set its S3-compatible `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `CALL_DATA_BUCKET`; leave `CALL_DATA_KMS_KEY_ID` unset. Set `QUEUE_MODE=inline` so recording work runs in the API process. Chroma runs locally in `./data/chroma`, and `KNOWLEDGE_BASE_ID` can remain unset.
+You can run the inbound call path without AWS. Create a free PostgreSQL database in Neon or Supabase and set `DATABASE_URL`. Create a Cloudflare R2 bucket and set its S3-compatible `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `CALL_DATA_BUCKET`; leave `CALL_DATA_KMS_KEY_ID` unset. Set `QUEUE_MODE=inline` so recording work runs in the API process. Configure the Vapi assistant's own knowledge base if it needs company FAQs, policies, or product material.
 
 Start the API with `docker compose up --build` or `uvicorn app:app --port 8000`, then expose it to Vapi:
 

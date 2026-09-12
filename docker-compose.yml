@@ -7,7 +7,6 @@ services:
       - .env
     volumes:
       - ./policies:/service/policies:ro
-      - ./data/chroma:/service/data/chroma
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
       interval: 15s
