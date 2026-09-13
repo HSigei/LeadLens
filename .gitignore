@@ -5,6 +5,7 @@ __pycache__/
 LOCAL_NOTES.md
 local-notes/
 data/
+logs/
 policies/tenants.json
 infra/*.tfvars
 !infra/terraform.tfvars.example

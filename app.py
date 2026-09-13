@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request, Response
 
 from call_center_integration import router as call_center_router
 from dashboard import router as dashboard_router
+from llm_server import router as custom_llm_router
 from observability import bind_request_id, capture_exception, configure_logging, current_request_id, elapsed_ms, initialize_error_tracking, log_event, request_id_from_header, reset_request_id
 from outbound_agent import router as outbound_agent_router
 from security import apply_security_headers
@@ -17,6 +18,7 @@ app = FastAPI(title="Call Intelligence Agent", docs_url=None, redoc_url=None, op
 app.include_router(dashboard_router)
 app.include_router(call_center_router)
 app.include_router(outbound_agent_router)
+app.include_router(custom_llm_router)
 
 
 @app.middleware("http")

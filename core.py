@@ -9,9 +9,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import jwt
+from dotenv import load_dotenv
 from fastapi import HTTPException
 
 from database import ConditionalWriteError, PostgresTable
+
+
+load_dotenv()
 
 
 PII_PATTERNS = (
