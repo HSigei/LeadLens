@@ -1,153 +1,124 @@
-# Call Center Analysis Agent
+# LeadLens
 
-This project implements a Vapi voice-call analytics workflow. Vapi handles inbound and outbound voice conversations, while a worker transcribes, analyzes, stores, and reports on completed calls.
+LeadLens is a Vapi call-event, post-call analytics, reporting, and outbound-dialing service. It is not a live conversational agent: Vapi owns the live call, speech recognition, speech synthesis, and turn-taking. LeadLens currently has no in-process knowledge base, document upload, CRM lookup, booking provider, or live LLM prompt/message loop.
 
-## Documentation
+## What Runs Today
 
-Detailed docs are kept locally in `local-notes/` (gitignored, not part of this repo). See that folder on your own machine for architecture, API, configuration, integration, operations, security, compliance, and testing notes.
+### Inbound and Outbound Vapi Events
 
-## Database integration
+`POST /webhooks/vapi/call` accepts a signed, normalized Vapi call event. It validates `X-Vapi-Signature` with `VAPI_WEBHOOK_SECRET`, verifies the tenant for a newly seen call, writes or updates the call record, and queues processing whenever `recording_url` is present.
 
-The application uses PostgreSQL for calls, organizations, and audit events when `DATABASE_URL` is configured. This is the recommended production path for relational reporting, audit queries, retention workflows, and deduplication.
+For outbound calling:
 
-```text
-DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE
-```
+- `POST /webhooks/ghl/outbound` accepts a GoHighLevel trigger signed with `GHL_OUTBOUND_WEBHOOK_SECRET`. It requires a `contact_id`.
+- `POST /webhooks/outbound/trigger` accepts either the same GHL flow or a generic CRM/form trigger. Generic triggers require `X-Outbound-Trigger-Secret` to match `OUTBOUND_TRIGGER_SECRET`.
+- LeadLens calls Vapi's call API using `VAPI_API_KEY`, `VAPI_ASSISTANT_ID`, and `VAPI_PHONE_NUMBER_ID`, then stores an `outbound_started` call record.
 
-The application creates the initial PostgreSQL tables and indexes on first connection:
+The generic call-center bridge also exposes `POST /api/call-center/events`, signed by `CALL_CENTER_WEBHOOK_SECRET`, and an admin-only `POST /api/call-center/preflight` endpoint. Its recording events are not currently compatible with the worker, which only processes call records whose provider is `vapi`.
 
-- `calls`
-- `organizations`
-- `audit_events`
+### Post-Call Processing
 
-Use a managed PostgreSQL service such as Aurora PostgreSQL, keep the database in private subnets, restrict access to the application security group, enable encryption and backups, and store `DATABASE_URL` in Secrets Manager. Do not commit the connection string.
+When a Vapi event supplies a recording URL, LeadLens either adds `process(call_sid)` as a FastAPI background task when `QUEUE_MODE=inline`, or sends `{call_sid, tenant_id}` to `PROCESSING_QUEUE_URL` for `worker.py` to consume.
 
-`DATABASE_URL` is required in every environment; the application will not start without it.
+The worker downloads the Vapi recording, stores it in S3-compatible object storage, transcribes it through Groq, redacts common email, phone, national-ID, and SSN patterns before Groq analysis, creates an Excel report, optionally posts a call outcome to one configured CRM webhook, and emails a presigned report URL.
 
-## Per-tenant analysis criteria
+Only the `QUEUE_MODE=sqs` path calls `handle_processing_failure()`: it retries failures up to `WORKER_MAX_RETRY_COUNT` (default `5`) and then marks the call `failed`. `QUEUE_MODE=inline` uses FastAPI `BackgroundTasks` directly; failures in that mode are neither retried nor recorded as `failed`.
 
-Every call is always scored on the same fixed core schema (sentiment, agent performance, resolution, keywords, etc.). On top of that, each tenant can define its own extra fields in its tenant policy entry so different companies can track what actually matters to them:
+Object keys are:
 
-```json
-"analysis_fields": [
-  { "name": "kyc_verified", "type": "boolean", "prompt": "Whether the agent completed identity/KYC verification during the call." },
-  { "name": "upsell_offered", "type": "text", "prompt": "Which product, if any, the agent offered as an upsell." }
-]
-```
+- `tenants/{tenant_id}/recordings/{call_sid}/recording.mp3`
+- `tenants/{tenant_id}/transcripts/{call_sid}/transcript.json`
+- `tenants/{tenant_id}/reports/{call_sid}/call-analysis.xlsx`
 
-`type` is `boolean` or `text`. These are appended to the analysis prompt for that tenant only, validated against the declared type, and surfaced as a "Custom Fields" column in both the per-call and master Excel reports. A tenant with no `analysis_fields` gets the same output as before this feature existed.
+Raw transcript storage is disabled by default with `STORE_RAW_TRANSCRIPTS=false`; the stored transcript is redacted unless it is explicitly enabled.
 
-## Required infrastructure
+### Tenant Policies and Reporting
 
-- A Vapi phone number and assistant for inbound and outbound conversations. Configure Vapi to send signed call events to LeadLens.
-- A private S3 bucket with Block Public Access, versioning, lifecycle retention, and SSE-KMS enabled.
-- PostgreSQL database for calls, organizations, and audit events. Set `DATABASE_URL` in the runtime secret store.
-- SQS queue with a dead-letter queue. Run `worker.py` as a separate ECS/Fargate service or worker process.
-- SES verified sender and recipients. Store all secrets in AWS Secrets Manager or the hosting platform's secret store.
+Tenant policy comes from `TENANT_POLICY_FILE`, or from `TENANT_ROUTING_JSON` when no file is configured. A tenant must provide its identifier, escalation number, privacy notice version, lawful basis, jurisdiction, processing region, cross-border safeguard, approval metadata, and a DPIA approval for configured high-risk jurisdictions.
 
-## Vapi voice calls
+Tenant `analysis_fields` can add `boolean` or `text` fields to the post-call Groq analysis schema. They are not live-agent context.
 
-Vapi is the sole voice provider. It owns the phone number, speech recognition, call recording, voice output, and live assistant conversation. Configure Vapi to send normalized inbound and outbound call events to `https://YOUR_DOMAIN/webhooks/vapi/call`, signed with `VAPI_WEBHOOK_SECRET` in `X-Vapi-Signature`.
+The authenticated supervisor API exposes:
 
-Each event needs `event_id`, `call_id`, `tenant_id`, `direction` (`inbound` or `outbound`), and `status`; it can additionally contain `caller_number`, `recording_url`, `transcript`, `ended_at`, and `metadata`. LeadLens stores each call and queues post-call processing when a recording URL is supplied.
+- `GET /api/calls` for tenant-filtered call records.
+- `GET /api/calls/{call_sid}/report-url` for a 15-minute report URL after an application-level tenant check.
+- `GET /api/metrics` for call metrics and stored learning guidance.
+- `DELETE /api/privacy/calls/{call_sid}` for an admin with `X-Data-Subject-Verified: true`; it deletes that call record and its audio, transcript, and report objects.
 
-## GHL + Vapi outbound calls
+`learning.py` can aggregate completed calls into prompt guidance stored on the tenant's organization record. Nothing currently injects this guidance into a live Vapi assistant or an LLM prompt.
 
-GoHighLevel (GHL) is the campaign trigger; Vapi dials and runs the voice conversation. Configure a GHL workflow to send a signed `POST` request to `https://YOUR_DOMAIN/webhooks/ghl/outbound` with:
+## Data Stores
 
-```json
-{
-  "tenant_id": "client-acme",
-  "contact_id": "ghl-contact-id",
-  "phone_number": "+15551234567",
-  "name": "Customer name",
-  "campaign_id": "renewal-september",
-  "metadata": {"lead_source": "renewal"}
-}
-```
+`database.py` uses PostgreSQL through `DATABASE_URL` and creates `calls`, `audit_events`, and `organizations` tables. Call queries are filtered by `tenant_id`; point reads require the caller to check the record tenant ID in application code. PostgreSQL is required for every data path.
 
-Sign the exact request body with HMAC-SHA256 using `GHL_OUTBOUND_WEBHOOK_SECRET` and send it as `X-GHL-Signature: sha256=<digest>`. The tenant must be in the approved tenant policy. The service sends the call request to Vapi using `VAPI_API_KEY`, `VAPI_ASSISTANT_ID`, and `VAPI_PHONE_NUMBER_ID`.
+S3-compatible storage is accessed through boto3. Set `AWS_ENDPOINT_URL` for an S3-compatible provider such as Cloudflare R2 or Backblaze B2. `CALL_DATA_KMS_KEY_ID` enables AWS KMS headers; leave it empty for providers that do not support them.
 
-Any CRM or form tool can instead call `/webhooks/outbound/trigger` with `provider: "generic"`, the same tenant, phone, name, campaign, and metadata fields, and `X-Outbound-Trigger-Secret` equal to `OUTBOUND_TRIGGER_SECRET`. Use the original GHL HMAC path for `provider: "ghl"`; it requires `contact_id` and `X-GHL-Signature`.
+There is no CRM read implementation. `CRM_WEBHOOK_URL` provides a write-only CRM webhook sync for completed-call outcomes.
 
-## Booking and learning
+## Configuration
 
-Booking conversion is tracked from `booking_id` values attached by Vapi or an external booking workflow. LeadLens does not currently create Cal.com bookings itself; Vapi owns the live voice conversation and any in-call booking action.
+Copy [.env.example](.env.example) to a protected local `.env` only for development. Do not commit real credentials.
 
-`learning.generate_prompt_guidance(tenant_id)` aggregates completed calls into common resolved/unresolved caller phrases, missed opportunities, training recommendations, and booking conversion. It saves a short, labeled `prompt_guidance` addendum on the tenant organization record. Dashboard `/api/metrics` returns that guidance and `booking_conversion_rate`.
+Core runtime configuration:
 
-## Setup
+- `DATABASE_URL`: PostgreSQL connection string.
+- `VAPI_API_KEY`, `VAPI_ASSISTANT_ID`, `VAPI_PHONE_NUMBER_ID`, `VAPI_WEBHOOK_SECRET`: Vapi outbound and event integration.
+- `CALL_CENTER_WEBHOOK_SECRET`: HMAC protection for `POST /api/call-center/events`.
+- `GHL_OUTBOUND_WEBHOOK_SECRET`: HMAC protection for `POST /webhooks/ghl/outbound` and GHL requests to `POST /webhooks/outbound/trigger`.
+- `OUTBOUND_TRIGGER_SECRET`: shared-secret protection for generic requests to `POST /webhooks/outbound/trigger`.
+- `GROQ_API_KEY`, `GROQ_TRANSCRIPTION_MODEL`, `GROQ_ANALYSIS_MODEL`: post-call transcription and analysis.
+- `CALL_DATA_BUCKET`, optional `CALL_DATA_KMS_KEY_ID`, and optional `AWS_ENDPOINT_URL`: object storage.
+- `PROCESSING_QUEUE_URL` and `QUEUE_MODE`: durable worker queue or local inline mode.
+- `REPORT_SENDER`, `REPORT_RECIPIENTS`: report delivery.
+- `DASHBOARD_JWT_SECRET`, or `OIDC_ISSUER` and `OIDC_AUDIENCE`: dashboard authentication.
 
-Copy the names in `.env.example` into your secret store with real values. Install dependencies:
+`GROQ_AGENT_MODEL`, `AGENT_GREETING`, and `CUSTOM_LLM_API_KEY` are reserved for the planned Custom LLM endpoint; no current runtime code consumes them.
+
+## Local Run
+
+Install dependencies:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 ```
 
-## Free local testing
-
-You can run the inbound call path without AWS. Create a free PostgreSQL database in Neon or Supabase and set `DATABASE_URL`. Create a Cloudflare R2 bucket and set its S3-compatible `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `CALL_DATA_BUCKET`; leave `CALL_DATA_KMS_KEY_ID` unset. Set `QUEUE_MODE=inline` so recording work runs in the API process. Configure the Vapi assistant's own knowledge base if it needs company FAQs, policies, or product material.
-
-Start the API with `docker compose up --build` or `uvicorn app:app --port 8000`, then expose it to Vapi:
+Create a policy file from the example and validate it:
 
 ```powershell
-ngrok http 8080
+Copy-Item policies\tenants.example.json policies\tenants.json
+.\.venv\Scripts\python.exe tools\validate_tenant_policy.py policies\tenants.json
 ```
 
-In Vapi, set the server URL to `https://YOUR_NGROK_DOMAIN/webhooks/vapi/call` and configure the same `VAPI_WEBHOOK_SECRET`. A completed recording then follows transcription, Groq analysis, report creation, and R2 storage. Do not start `worker.py` when `QUEUE_MODE=inline`.
+Start the API:
 
-For a local container run, copy `.env.example` to `.env`, provide non-production values, then run `docker compose up --build`. The unauthenticated health endpoint at `http://localhost:8080/healthz` works without provider credentials; live voice and data paths require their configured services.
+```powershell
+.\.venv\Scripts\uvicorn.exe app:app --host 0.0.0.0 --port 8080
+```
 
-Run the local verification suite with:
+For local inline processing set `QUEUE_MODE=inline`; do not start `worker.py`. For SQS processing, set `QUEUE_MODE=sqs` and run the worker separately:
+
+```powershell
+.\.venv\Scripts\python.exe worker.py
+```
+
+Run project checks:
 
 ```powershell
 .\scripts\check.ps1
 ```
 
-Create `policies/tenants.json` from `policies/tenants.example.json`. Have the client privacy owner complete and approve its jurisdiction, consent, transfer, and contact fields, then validate it before deployment:
+## Deployment
 
-```powershell
-.\.venv\Scripts\python.exe tools\validate_tenant_policy.py policies\tenants.json
-```
+The optional [infra](infra) Terraform configuration provisions an S3 bucket, KMS key, FIFO SQS queue and DLQ, ECS API and worker services, ALB, IAM roles, CloudWatch logging/alarms, and an SNS alert subscription. It expects ARNs for existing Secrets Manager secrets, including `DATABASE_URL` and Vapi/Groq credentials. It does not provision PostgreSQL, Vapi, Groq, SES verification, or a scheduler for `aggregator.py`.
 
-## Deployment options
-
-For local development, mount the reviewed policy file at `TENANT_POLICY_FILE`. For Terraform self-hosting, provide the same reviewed policy as the sensitive `tenant_policy_json` variable; it is injected as `TENANT_ROUTING_JSON` and is not baked into the container image.
-
-## Self-Hosting
-
-The optional [infra](infra) Terraform module deploys this application into an AWS account. Copy `infra/terraform.tfvars.example` to `infra/terraform.tfvars`, fill in account-specific values, then run:
+Terraform commands:
 
 ```powershell
 terraform -chdir=infra init
 terraform -chdir=infra validate
 terraform -chdir=infra plan
-terraform -chdir=infra apply
 ```
 
-The generated `terraform.tfvars` is ignored by Git. Configure Secrets Manager, a container image, a tenant policy, and Vapi webhooks before accepting live calls.
+## Planned Custom LLM Work
 
-Start the Vapi event receiver:
-
-```powershell
-.\.venv\Scripts\uvicorn.exe app:app --host 0.0.0.0 --port 8000
-```
-
-Start the durable processor separately:
-
-```powershell
-.\.venv\Scripts\python.exe worker.py
-```
-Schedule the master workbook job once daily through the platform scheduler:
-
-```powershell
-.\.venv\Scripts\python.exe aggregator.py
-```
-
-## Required go-live controls
-
-Before connecting a client number, confirm consent rules, disclosure language, retention and deletion policy, permitted AI uses, escalation paths, and the approved knowledge base. Ensure the AWS runtime role follows least privilege, CloudTrail logging is enabled, S3 has no public access, and the SQS DLQ is monitored. Every webhook is signature-validated before call data is accepted.
-
-> **Operational note:** Worker retries are bounded and failed calls retain retry/error metadata. Data-subject erasure records the deleted storage keys and retention period in the audit trail. API routes are rate-limited, with stricter limits for privacy and knowledge-management endpoints.
-
-The generated report is a per-call workbook. The selected database retains call metadata and analysis records so the scheduled aggregation job can create daily, weekly, and client-wide master workbooks without unsafe concurrent edits to an Excel file.
+The repository does not yet expose Vapi's Custom LLM `chat/completions` endpoint. When that work is deployed, the Vapi assistant must be configured with `model.provider: "custom-llm"` and a URL ending in `/custom-llm/chat/completions`. Tenant and call identification must be verified from a real Vapi request before enabling any tenant-specific context.
