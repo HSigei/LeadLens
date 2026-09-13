@@ -3,6 +3,7 @@
   "tenants": {
     "+15551234567": {
       "tenant_id": "client-acme",
+      "vapi_assistant_id": "vapi-assistant-client-acme",
       "escalation_number": "+15557654321",
       "jurisdiction": "US-CA",
       "processing_region": "us-east-1",

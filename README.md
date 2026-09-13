@@ -119,6 +119,12 @@ terraform -chdir=infra validate
 terraform -chdir=infra plan
 ```
 
-## Planned Custom LLM Work
+## Custom LLM
 
-The repository does not yet expose Vapi's Custom LLM `chat/completions` endpoint. When that work is deployed, the Vapi assistant must be configured with `model.provider: "custom-llm"` and a URL ending in `/custom-llm/chat/completions`. Tenant and call identification must be verified from a real Vapi request before enabling any tenant-specific context.
+LeadLens exposes `POST /custom-llm/{secret_key}/chat/completions` for Vapi Custom LLM requests. It validates the path-segment key against `CUSTOM_LLM_API_KEY`, resolves the tenant through the request `assistant.id`, prepends a LeadLens system prompt, and streams Groq output back as OpenAI-compatible Server-Sent Events.
+
+Each tenant policy must include a unique `vapi_assistant_id` matching its Vapi assistant. The endpoint fails closed when the assistant ID, call ID, messages, key, or tenant mapping is missing or invalid. It uses Vapi's provided message array for every request and does not retain server-side conversation history.
+
+Configure the Vapi assistant with `model.provider: "custom-llm"` and a base URL of `https://YOUR_DOMAIN/custom-llm/YOUR_SECRET_KEY`; Vapi appends `/chat/completions`. Set Model Advanced "Metadata Send Mode" to "Destructured" only when you need the observed request metadata fields; tenant resolution does not depend on metadata or variable values.
+
+When the latest caller message contains `representative`, `human`, `agent`, `supervisor`, `stop calling`, or `do not call`, LeadLens streams a conversational handoff confirmation and records an escalation audit event. It does not yet invoke Vapi's native Transfer Call tool.

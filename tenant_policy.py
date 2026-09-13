@@ -12,6 +12,7 @@ from core import validate_tenant_compliance
 
 POLICY_VERSION = 1
 REQUIRED_APPROVALS = ("approved_by", "approved_at", "data_protection_contact")
+REQUIRED_TENANT_FIELDS = ("vapi_assistant_id",)
 
 
 def read_policy_file(path: str) -> dict[str, Any]:
@@ -41,6 +42,9 @@ def validate_registry(registry: dict[str, Any]) -> None:
         missing = [field for field in REQUIRED_APPROVALS if not tenant.get(field)]
         if missing:
             raise ValueError(f"{number} is missing documented approvals: {', '.join(missing)}.")
+        missing = [field for field in REQUIRED_TENANT_FIELDS if not tenant.get(field)]
+        if missing:
+            raise ValueError(f"{number} is missing required tenant fields: {', '.join(missing)}.")
         validate_analysis_fields(tenant.get("analysis_fields", []))
 
 
@@ -71,3 +75,12 @@ def tenant_by_id(tenant_id: str) -> dict[str, Any] | None:
     except ValueError:
         return None
     return next((tenant for tenant in registry["tenants"].values() if tenant.get("tenant_id") == tenant_id), None)
+
+
+def tenant_by_vapi_assistant_id(assistant_id: str) -> dict[str, Any] | None:
+    try:
+        registry = policy_registry()
+        validate_registry(registry)
+    except ValueError:
+        return None
+    return next((tenant for tenant in registry["tenants"].values() if tenant.get("vapi_assistant_id") == assistant_id), None)

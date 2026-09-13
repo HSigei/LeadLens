@@ -8,6 +8,7 @@ from tenant_policy import tenant_by_id, validate_registry
 def policy(**overrides):
     tenant = {
         "tenant_id": "tenant-a",
+        "vapi_assistant_id": "assistant-a",
         "escalation_number": "+15550001111",
         "jurisdiction": "US-CA",
         "processing_region": "us-east-1",
@@ -52,3 +53,12 @@ def test_tenant_by_id_finds_and_misses(monkeypatch):
     monkeypatch.delenv("TENANT_POLICY_FILE", raising=False)
     assert tenant_by_id("tenant-a")["tenant_id"] == "tenant-a"
     assert tenant_by_id("unknown-tenant") is None
+
+
+def test_tenant_by_vapi_assistant_id_finds_and_misses(monkeypatch):
+    from tenant_policy import tenant_by_vapi_assistant_id
+
+    monkeypatch.setenv("TENANT_ROUTING_JSON", json.dumps(policy()))
+    monkeypatch.delenv("TENANT_POLICY_FILE", raising=False)
+    assert tenant_by_vapi_assistant_id("assistant-a")["tenant_id"] == "tenant-a"
+    assert tenant_by_vapi_assistant_id("unknown-assistant") is None
