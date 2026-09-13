@@ -23,9 +23,6 @@ locals {
     { name = "AWS_REGION", value = var.aws_region },
     { name = "CALL_DATA_BUCKET", value = aws_s3_bucket.data.id },
     { name = "CALL_DATA_KMS_KEY_ID", value = aws_kms_key.data.arn },
-    { name = "CALLS_TABLE", value = aws_dynamodb_table.calls.name },
-    { name = "AUDIT_TABLE", value = aws_dynamodb_table.audit.name },
-    { name = "ORGANIZATIONS_TABLE", value = aws_dynamodb_table.organizations.name },
     { name = "PROCESSING_QUEUE_URL", value = aws_sqs_queue.processing.url },
     { name = "PUBLIC_BASE_URL", value = var.public_base_url },
     { name = "TENANT_ROUTING_JSON", value = var.tenant_policy_json },
@@ -36,9 +33,16 @@ locals {
     { name = "SENTRY_TRACES_SAMPLE_RATE", value = var.sentry_traces_sample_rate },
   ]
   application_secrets = [
+    { name = "DATABASE_URL", valueFrom = var.database_url_arn },
     { name = "GROQ_API_KEY", valueFrom = var.groq_api_key_arn },
     { name = "DASHBOARD_JWT_SECRET", valueFrom = var.dashboard_jwt_secret_arn },
     { name = "CALL_CENTER_WEBHOOK_SECRET", valueFrom = var.call_center_webhook_secret_arn },
+    { name = "VAPI_API_KEY", valueFrom = var.vapi_api_key_arn },
+    { name = "VAPI_WEBHOOK_SECRET", valueFrom = var.vapi_webhook_secret_arn },
+    { name = "VAPI_ASSISTANT_ID", valueFrom = var.vapi_assistant_id_arn },
+    { name = "VAPI_PHONE_NUMBER_ID", valueFrom = var.vapi_phone_number_id_arn },
+    { name = "GHL_OUTBOUND_WEBHOOK_SECRET", valueFrom = var.ghl_outbound_webhook_secret_arn },
+    { name = "OUTBOUND_TRIGGER_SECRET", valueFrom = var.outbound_trigger_secret_arn },
   ]
 }
 
@@ -94,82 +98,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "data" {
   }
 }
 
-resource "aws_dynamodb_table" "calls" {
-  name = "${local.name}-calls"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key = "call_sid"
-  attribute {
-    name = "call_sid"
-    type = "S"
-  }
-  attribute {
-    name = "tenant_id"
-    type = "S"
-  }
-  attribute {
-    name = "created_at"
-    type = "S"
-  }
-  global_secondary_index {
-    name = "tenant-created-at-index"
-    hash_key = "tenant_id"
-    range_key = "created_at"
-    projection_type = "ALL"
-  }
-  ttl {
-    attribute_name = "expires_at"
-    enabled = true
-  }
-  point_in_time_recovery {
-    enabled = true
-  }
-  server_side_encryption {
-    enabled = true
-    kms_key_arn = aws_kms_key.data.arn
-  }
-  tags = local.tags
-}
-
-resource "aws_dynamodb_table" "audit" {
-  name = "${local.name}-audit"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key = "event_id"
-  attribute {
-    name = "event_id"
-    type = "S"
-  }
-  ttl {
-    attribute_name = "expires_at"
-    enabled = true
-  }
-  point_in_time_recovery {
-    enabled = true
-  }
-  server_side_encryption {
-    enabled = true
-    kms_key_arn = aws_kms_key.data.arn
-  }
-  tags = local.tags
-}
-
-resource "aws_dynamodb_table" "organizations" {
-  name = "${local.name}-organizations"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key = "tenant_id"
-  attribute {
-    name = "tenant_id"
-    type = "S"
-  }
-  point_in_time_recovery {
-    enabled = true
-  }
-  server_side_encryption {
-    enabled = true
-    kms_key_arn = aws_kms_key.data.arn
-  }
-  tags = local.tags
-}
-
 resource "aws_sqs_queue" "dlq" {
   name = "${local.name}-processing-dlq.fifo"
   fifo_queue = true
@@ -217,14 +145,13 @@ resource "aws_iam_role_policy_attachment" "execution" {
 resource "aws_iam_role_policy" "execution_secrets" {
   name = "read-task-secrets"
   role = aws_iam_role.execution.id
-  policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = [var.dashboard_jwt_secret_arn, var.groq_api_key_arn] }] })
+  policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = [var.database_url_arn, var.dashboard_jwt_secret_arn, var.groq_api_key_arn, var.call_center_webhook_secret_arn, var.vapi_api_key_arn, var.vapi_webhook_secret_arn, var.vapi_assistant_id_arn, var.vapi_phone_number_id_arn, var.ghl_outbound_webhook_secret_arn, var.outbound_trigger_secret_arn] }] })
 }
 
 resource "aws_iam_role_policy" "task" {
   name = "application"
   role = aws_iam_role.task.id
   policy = jsonencode({ Version = "2012-10-17", Statement = [
-    { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:Scan"], Resource = [aws_dynamodb_table.calls.arn, "${aws_dynamodb_table.calls.arn}/index/*", aws_dynamodb_table.audit.arn, aws_dynamodb_table.organizations.arn] },
     { Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], Resource = ["${aws_s3_bucket.data.arn}/*"] },
     { Effect = "Allow", Action = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:SendMessage", "sqs:GetQueueAttributes"], Resource = aws_sqs_queue.processing.arn },
     { Effect = "Allow", Action = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"], Resource = aws_kms_key.data.arn },

@@ -25,6 +25,13 @@ variable "sentry_traces_sample_rate" {
 variable "dashboard_jwt_secret_arn" { type = string }
 variable "groq_api_key_arn" { type = string }
 variable "call_center_webhook_secret_arn" { type = string }
+variable "database_url_arn" { type = string }
+variable "vapi_api_key_arn" { type = string }
+variable "vapi_webhook_secret_arn" { type = string }
+variable "vapi_assistant_id_arn" { type = string }
+variable "vapi_phone_number_id_arn" { type = string }
+variable "ghl_outbound_webhook_secret_arn" { type = string }
+variable "outbound_trigger_secret_arn" { type = string }
 variable "tenant_policy_file" {
 	type = string
 	default = "/service/policies/tenants.json"

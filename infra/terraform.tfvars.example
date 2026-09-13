@@ -13,6 +13,13 @@ alert_email = "oncall@example.com"
 dashboard_jwt_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/dashboard-jwt"
 groq_api_key_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/groq"
 call_center_webhook_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/call-center-webhook"
+database_url_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/database-url"
+vapi_api_key_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/vapi-api-key"
+vapi_webhook_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/vapi-webhook"
+vapi_assistant_id_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/vapi-assistant-id"
+vapi_phone_number_id_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/vapi-phone-number-id"
+ghl_outbound_webhook_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/ghl-outbound-webhook"
+outbound_trigger_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:leadlens/outbound-trigger"
 tenant_policy_json = <<-JSON
 {
 	"version": 1,

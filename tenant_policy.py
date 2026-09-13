@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +42,6 @@ def validate_registry(registry: dict[str, Any]) -> None:
         if missing:
             raise ValueError(f"{number} is missing documented approvals: {', '.join(missing)}.")
         validate_analysis_fields(tenant.get("analysis_fields", []))
-        validate_booking_config(tenant)
 
 
 def validate_analysis_fields(analysis_fields: Any) -> None:
@@ -52,19 +50,6 @@ def validate_analysis_fields(analysis_fields: Any) -> None:
     for field in analysis_fields:
         if not isinstance(field, dict) or not field.get("name") or field.get("type", "text") not in {"boolean", "text"}:
             raise ValueError("Each analysis_fields entry needs a 'name' and a type of 'boolean' or 'text'.")
-
-
-def validate_booking_config(tenant: dict[str, Any]) -> None:
-    provider = tenant.get("booking_provider")
-    if provider is None:
-        return
-    if provider != "calcom":
-        raise ValueError("booking_provider must be 'calcom'.")
-    if not tenant.get("booking_event_type_id"):
-        raise ValueError("Cal.com booking requires booking_event_type_id.")
-    api_key_env = tenant.get("booking_api_key_env")
-    if not isinstance(api_key_env, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{2,127}", api_key_env):
-        raise ValueError("Cal.com booking requires a valid booking_api_key_env.")
 
 
 def tenant_for_number(number: str) -> dict[str, str]:

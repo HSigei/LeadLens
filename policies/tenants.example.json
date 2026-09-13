@@ -19,10 +19,7 @@
       "analysis_fields": [
         { "name": "kyc_verified", "type": "boolean", "prompt": "Whether the agent completed identity/KYC verification during the call." },
         { "name": "upsell_offered", "type": "text", "prompt": "Which product, if any, the agent offered as an upsell." }
-      ],
-      "booking_provider": "calcom",
-      "booking_api_key_env": "CALCOM_API_KEY",
-      "booking_event_type_id": "12345"
+      ]
     }
   }
 }
