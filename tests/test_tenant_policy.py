@@ -62,3 +62,16 @@ def test_tenant_by_vapi_assistant_id_finds_and_misses(monkeypatch):
     monkeypatch.delenv("TENANT_POLICY_FILE", raising=False)
     assert tenant_by_vapi_assistant_id("assistant-a")["tenant_id"] == "tenant-a"
     assert tenant_by_vapi_assistant_id("unknown-assistant") is None
+
+
+def test_tenant_by_vapi_assistant_id_rejects_unreadable_policy_file(monkeypatch):
+    from fastapi import HTTPException
+    from tenant_policy import tenant_by_vapi_assistant_id
+
+    monkeypatch.setenv("TENANT_POLICY_FILE", "missing-policy.json")
+
+    with pytest.raises(HTTPException) as error:
+        tenant_by_vapi_assistant_id("assistant-a")
+
+    assert error.value.status_code == 503
+    assert "Tenant policy file could not be loaded" in error.value.detail

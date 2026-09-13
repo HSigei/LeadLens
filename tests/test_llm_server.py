@@ -91,6 +91,23 @@ def test_custom_llm_rejects_unmatched_assistant_without_calling_groq(monkeypatch
     assert response.json()["detail"] == "No tenant is configured for this Vapi assistant."
 
 
+def test_custom_llm_reports_unreadable_tenant_policy_distinctly(monkeypatch):
+    from fastapi import HTTPException
+
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", "test-secret")
+    monkeypatch.setattr(
+        llm_server,
+        "tenant_by_vapi_assistant_id",
+        lambda assistant_id: (_ for _ in ()).throw(HTTPException(503, "Tenant policy file could not be loaded: unreadable")),
+    )
+    monkeypatch.setattr(llm_server.httpx, "AsyncClient", lambda **kwargs: (_ for _ in ()).throw(AssertionError("Groq must not be called")))
+
+    response = TestClient(app.app).post("/custom-llm/test-secret/chat/completions", json=vapi_request([]))
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Tenant policy file could not be loaded: unreadable"
+
+
 def test_custom_llm_escalation_streams_reply_and_audits(monkeypatch):
     monkeypatch.setenv("CUSTOM_LLM_API_KEY", "test-secret")
     monkeypatch.setattr(llm_server, "tenant_by_vapi_assistant_id", lambda assistant_id: {"tenant_id": "tenant-a"})

@@ -81,6 +81,6 @@ def tenant_by_vapi_assistant_id(assistant_id: str) -> dict[str, Any] | None:
     try:
         registry = policy_registry()
         validate_registry(registry)
-    except ValueError:
-        return None
+    except ValueError as error:
+        raise HTTPException(503, f"Tenant policy file could not be loaded: {error}") from error
     return next((tenant for tenant in registry["tenants"].values() if tenant.get("vapi_assistant_id") == assistant_id), None)
