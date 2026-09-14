@@ -63,7 +63,7 @@ def groq_headers() -> dict[str, str]:
 
 
 def transcribe(audio: bytes, filename: str) -> str:
-    response = httpx.post("https://api.groq.com/openai/v1/audio/transcriptions", headers=groq_headers(), files={"file": (filename, audio, "audio/mpeg")}, data={"model": os.getenv("GROQ_TRANSCRIPTION_MODEL", "whisper-large-v3-turbo")}, timeout=120)
+    response = httpx.post("https://api.groq.com/openai/v1/audio/transcriptions", headers=groq_headers(), files={"file": (filename, audio, "audio/mpeg")}, data={"model": os.getenv("GROQ_TRANSCRIPTION_MODEL", "whisper-large-v3")}, timeout=120)
     response.raise_for_status()
     return response.json()["text"].strip()
 
@@ -74,7 +74,7 @@ def analyze(transcript: str, custom_fields: list[dict[str, str]] | None = None) 
     if custom_fields:
         field_lines = "\n".join(f"- {field['name']} ({field.get('type', 'text')}): {field.get('prompt', field['name'])}" for field in custom_fields)
         prompt += f"\n\nAlso return a top-level \"custom\" object with exactly these additional fields, inferred only from the transcript:\n{field_lines}"
-    response = httpx.post("https://api.groq.com/openai/v1/chat/completions", headers={**groq_headers(), "Content-Type": "application/json"}, json={"model": os.getenv("GROQ_ANALYSIS_MODEL", "llama-3.3-70b-versatile"), "response_format": {"type": "json_object"}, "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": transcript}]}, timeout=90)
+    response = httpx.post("https://api.groq.com/openai/v1/chat/completions", headers={**groq_headers(), "Content-Type": "application/json"}, json={"model": os.getenv("GROQ_ANALYSIS_MODEL", "openai/gpt-oss-120b"), "response_format": {"type": "json_object"}, "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": transcript}]}, timeout=90)
     response.raise_for_status()
     return validate_analysis(json.loads(response.json()["choices"][0]["message"]["content"]), custom_fields)
 
