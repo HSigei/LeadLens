@@ -34,7 +34,7 @@ Raw transcript storage is disabled by default with `STORE_RAW_TRANSCRIPTS=false`
 
 ### Tenant Policies and Reporting
 
-Tenant policy comes from `TENANT_POLICY_FILE`, or from `TENANT_ROUTING_JSON` when no file is configured. A tenant must provide its identifier, escalation number, privacy notice version, lawful basis, jurisdiction, processing region, cross-border safeguard, approval metadata, and a DPIA approval for configured high-risk jurisdictions.
+Tenant policy comes from `TENANT_POLICY_FILE`, or from `TENANT_ROUTING_JSON` when no file is configured. For a bare local Uvicorn run, set `TENANT_POLICY_FILE` to a relative path such as `policies/tenants.json`; the container image's `/service/policies/tenants.json` does not exist outside the container. A tenant must provide its identifier, escalation number, privacy notice version, lawful basis, jurisdiction, processing region, cross-border safeguard, approval metadata, and a DPIA approval for configured high-risk jurisdictions.
 
 Tenant `analysis_fields` can add `boolean` or `text` fields to the post-call Groq analysis schema. They are not live-agent context.
 
@@ -128,3 +128,5 @@ Each tenant policy must include a unique `vapi_assistant_id` matching its Vapi a
 Configure the Vapi assistant with `model.provider: "custom-llm"` and a base URL of `https://YOUR_DOMAIN/custom-llm/YOUR_SECRET_KEY`; Vapi appends `/chat/completions`. Set Model Advanced "Metadata Send Mode" to "Destructured" only when you need the observed request metadata fields; tenant resolution does not depend on metadata or variable values.
 
 When the latest caller message contains `representative`, `human`, `agent`, `supervisor`, `stop calling`, or `do not call`, LeadLens streams a conversational handoff confirmation and records an escalation audit event. It does not yet invoke Vapi's native Transfer Call tool.
+
+Before deploying, confirm `GROQ_AGENT_MODEL` (and `GROQ_ANALYSIS_MODEL`, `GROQ_TRANSCRIPTION_MODEL`) are still valid for the configured Groq account by querying `GET https://api.groq.com/openai/v1/models`; Groq's available models can change per account/tier without notice, and an outdated model name fails with `model_not_found` only at request time.
