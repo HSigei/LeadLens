@@ -1,6 +1,6 @@
 # LeadLens
 
-LeadLens is a Vapi call-event, post-call analytics, reporting, and outbound-dialing service. It is not a live conversational agent: Vapi owns the live call, speech recognition, speech synthesis, and turn-taking. LeadLens currently has no in-process knowledge base, document upload, CRM lookup, booking provider, or live LLM prompt/message loop.
+LeadLens is a Vapi call-event, post-call analytics, reporting, and outbound-dialing service, with a Custom LLM endpoint that generates live conversational replies. Vapi owns the live call, speech recognition, and speech synthesis. LeadLens has no CRM read/lookup or booking provider. Unstructured document-based knowledge retrieval exists but is disabled by default (`KNOWLEDGE_BACKEND=disabled`; see the Custom LLM section).
 
 ## What Runs Today
 
@@ -130,3 +130,7 @@ Configure the Vapi assistant with `model.provider: "custom-llm"` and a base URL 
 When the latest caller message contains `representative`, `human`, `agent`, `supervisor`, `stop calling`, or `do not call`, LeadLens streams a conversational handoff confirmation and records an escalation audit event. It does not yet invoke Vapi's native Transfer Call tool.
 
 Before deploying, confirm `GROQ_AGENT_MODEL` (and `GROQ_ANALYSIS_MODEL`, `GROQ_TRANSCRIPTION_MODEL`) are still valid for the configured Groq account by querying `GET https://api.groq.com/openai/v1/models`; Groq's available models can change per account/tier without notice, and an outdated model name fails with `model_not_found` only at request time.
+
+### Knowledge Retrieval
+
+Set `KNOWLEDGE_BACKEND=postgres` to enable unstructured document retrieval (default `disabled`). An authenticated admin can upload document text with `POST /api/knowledge/upload` (`filename`, `text_content`); LeadLens chunks the text and stores it per tenant in PostgreSQL. Retrieval uses PostgreSQL full-text search (`to_tsvector`/`plainto_tsquery`/`ts_rank`), scoped by `tenant_id`, not semantic/embedding search — see [docs/CUSTOM_LLM_FINDINGS.md](docs/CUSTOM_LLM_FINDINGS.md) for why Chroma was evaluated and rejected, and the resulting search-quality trade-off.

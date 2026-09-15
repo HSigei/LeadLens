@@ -38,6 +38,8 @@ Escalation phrases receive a streamed conversational handoff response and an aud
 
 Escalation uses a hard substring keyword gate inherited from the legacy call flow. It can produce false positives, for example when a caller says that their supervisor mentioned something; it does not call Groq before responding.
 
+When a tenant's structured facts alone (`hours.monday_hours: ...` style lines) reach `MAX_CONTEXT_BLOCK_CHARS - 2`, `build_context_block()` falls back to `structured[:MAX_CONTEXT_BLOCK_CHARS]`, truncating the facts list by its SQL ordering (`fact_type, fact_key`), so alphabetically-last facts are dropped regardless of importance. This is acceptable for now because no current tenant's structured block approaches the cap and building fact-level prioritization would be premature; revisit this when any tenant's structured block approaches ~1400 chars, or when the `custom_llm.context_facts_truncated` warning log fires in production. Both silent-truncation paths now emit that warning — the `remaining <= 0` branch (`unstructured_present=True`) and the `not unstructured` branch (`unstructured_present=False`) — and together they are the mitigation currently in place.
+
 ## Environment Loading
 
 `core.py` calls `load_dotenv()` before runtime configuration is read, so a bare Uvicorn process loads the local `.env` file. Docker Compose-provided variables remain authoritative because `load_dotenv()` does not override process environment variables by default.
@@ -67,6 +69,17 @@ Re-query `/v1/models` before assuming any hardcoded Groq model name is still val
 ### `num_model_request_in_turn` is currently always `None`
 
 The `turn_processed` audit event's `detail.num_model_request_in_turn` field is not populated from Vapi's request body; it is not extracted from `metadata.numModelRequestInTurn` (or wherever Vapi actually places it). This is a minor known issue, not blocking, and is a candidate for a small follow-up fix.
+
+## Context Retrieval: Chroma Rejected, PostgreSQL Full-Text Search Used Instead
+
+Chroma (`chromadb`) was evaluated for unstructured knowledge/document retrieval and explicitly rejected. Live advisory data confirmed `PYSEC-2026-3813` (CVSS 8.8, a cross-tenant data isolation break — exactly the failure category this codebase's architecture exists to prevent) and `PYSEC-2026-311` (CVSS 9.3, pre-auth remote code execution), neither with a fixed version available. This is a hard rejection, not a "re-check later": do not reintroduce `chromadb` as a dependency without new information that both CVEs are resolved.
+
+Instead, `knowledge.py` and `database.py` implement unstructured retrieval directly against the already-trusted PostgreSQL connection, using `tenant_documents` (chunked document text) and PostgreSQL's built-in full-text search (`to_tsvector`/`plainto_tsquery`/`ts_rank`), gated behind `KNOWLEDGE_BACKEND` (default `disabled`; `postgres` to enable). Tenant isolation is enforced by the same `WHERE tenant_id = %s` pattern already used throughout this codebase, not by a separate access-control layer.
+
+**Trade-off, stated explicitly:** full-text search is keyword/lexical matching, not semantic similarity. It will miss paraphrased or semantically-related matches that true embedding-based retrieval would catch (for example, a query for "opening times" will not match a document chunk that only says "hours of operation" unless both phrasings appear). This is a real capability loss compared to Chroma. It is accepted here because it requires zero additional dependencies, has no known CVEs, and reuses the exact tenant-isolation mechanism already verified safe elsewhere in this codebase, rather than introducing a new attack surface for a real, quantified risk.
+
+`search_document_chunks()` currently computes `to_tsvector()` at query time on every call rather than reading it from a stored/indexed column; this is fine at current near-zero data volume but should become a `GENERATED ALWAYS AS (to_tsvector(...)) STORED` column with a GIN index once real tenant document volume exists.
+
 
 ### End-to-end verification via a real Vapi call
 
