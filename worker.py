@@ -13,12 +13,13 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
 from core import audit, calls_table, redact_pii, retention_expiry, utc_now, validate_analysis
-from observability import capture_exception, configure_logging, log_event
+from logging_config import setup_logging
+from observability import capture_exception, log_event
 from storage import storage_client
 from tenant_policy import tenant_by_id
 
 
-configure_logging()
+setup_logging()
 
 
 def env(name: str) -> str:

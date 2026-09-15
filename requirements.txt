@@ -9,3 +9,4 @@ boto3==1.40.13
 PyJWT==2.13.0
 sentry-sdk[fastapi]==2.35.0
 psycopg[binary]>=3.2,<4
+colorama==0.4.6
