@@ -64,6 +64,8 @@ def test_custom_llm_streams_groq_response_and_audits_call(monkeypatch):
     monkeypatch.setattr(llm_server, "tenant_by_vapi_assistant_id", lambda assistant_id: {"tenant_id": "tenant-a"})
     audits = capture_scheduled_audits(monkeypatch)
     monkeypatch.setattr(llm_server, "claim_call_start", lambda *args: True)
+    monkeypatch.setattr(llm_server, "get_facts", lambda tenant_id: [])
+    monkeypatch.setattr(llm_server, "retrieve_context", lambda tenant_id, message: "")
     monkeypatch.setattr(llm_server.httpx, "AsyncClient", lambda **kwargs: stream_client(['data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}', 'data: {"choices":[{"delta":{"content":" there"},"finish_reason":"stop"}]}', "data: [DONE]"], requests)())
     llm_server.STARTED_CALL_CACHE.clear()
 
@@ -129,6 +131,8 @@ def test_custom_llm_uses_each_same_call_request_independently(monkeypatch):
     monkeypatch.setattr(llm_server, "tenant_by_vapi_assistant_id", lambda assistant_id: {"tenant_id": "tenant-a"})
     capture_scheduled_audits(monkeypatch)
     monkeypatch.setattr(llm_server, "claim_call_start", lambda *args: False)
+    monkeypatch.setattr(llm_server, "get_facts", lambda tenant_id: [])
+    monkeypatch.setattr(llm_server, "retrieve_context", lambda tenant_id, message: "")
     monkeypatch.setattr(llm_server.httpx, "AsyncClient", lambda **kwargs: stream_client(['data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}', "data: [DONE]"], requests)())
     llm_server.STARTED_CALL_CACHE.clear()
     client = TestClient(app.app)
@@ -158,6 +162,8 @@ def test_cached_call_skips_durable_claim(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "groq-key")
     monkeypatch.setattr(llm_server, "tenant_by_vapi_assistant_id", lambda assistant_id: {"tenant_id": "tenant-a"})
     monkeypatch.setattr(llm_server, "claim_call_start", lambda *args: (_ for _ in ()).throw(AssertionError("cached call must not claim again")))
+    monkeypatch.setattr(llm_server, "get_facts", lambda tenant_id: [])
+    monkeypatch.setattr(llm_server, "retrieve_context", lambda tenant_id, message: "")
     monkeypatch.setattr(llm_server.httpx, "AsyncClient", lambda **kwargs: stream_client(['data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}', "data: [DONE]"], requests)())
     capture_scheduled_audits(monkeypatch)
     llm_server.STARTED_CALL_CACHE.clear()
@@ -230,3 +236,40 @@ def test_background_audit_failure_is_logged(monkeypatch):
     asyncio.run(verify())
 
     assert logged == [(("custom_llm.audit_failed", logging.ERROR), {"error_type": "RuntimeError", "error": "database unavailable"})]
+
+
+def test_build_context_block_returns_empty_for_unconfigured_tenant(monkeypatch):
+    monkeypatch.setattr(llm_server, "get_facts", lambda tenant_id: [])
+    monkeypatch.setattr(llm_server, "retrieve_context", lambda tenant_id, message: "")
+
+    assert llm_server.build_context_block("tenant-a", "What are your hours?") == ""
+
+
+def test_build_context_block_prioritizes_structured_facts_first(monkeypatch):
+    monkeypatch.setattr(llm_server, "get_facts", lambda tenant_id: [{"fact_type": "hours", "fact_key": "monday_hours", "fact_value": "9am-5pm"}])
+    monkeypatch.setattr(llm_server, "retrieve_context", lambda tenant_id, message: "Unstructured policy text.")
+
+    context = llm_server.build_context_block("tenant-a", "What are your hours?")
+
+    assert context.startswith("hours.monday_hours: 9am-5pm")
+    assert "Unstructured policy text." in context
+
+
+def test_build_context_block_truncates_unstructured_when_combined_exceeds_limit(monkeypatch):
+    structured_fact = {"fact_type": "hours", "fact_key": "monday_hours", "fact_value": "x" * 100}
+    monkeypatch.setattr(llm_server, "get_facts", lambda tenant_id: [structured_fact])
+    monkeypatch.setattr(llm_server, "retrieve_context", lambda tenant_id, message: "y" * 5000)
+
+    context = llm_server.build_context_block("tenant-a", "question")
+
+    assert len(context) <= llm_server.MAX_CONTEXT_BLOCK_CHARS
+    assert context.startswith("hours.monday_hours:")
+
+
+def test_build_context_block_uses_only_structured_when_no_unstructured_match(monkeypatch):
+    monkeypatch.setattr(llm_server, "get_facts", lambda tenant_id: [{"fact_type": "hours", "fact_key": "monday_hours", "fact_value": "9am-5pm"}])
+    monkeypatch.setattr(llm_server, "retrieve_context", lambda tenant_id, message: "")
+
+    context = llm_server.build_context_block("tenant-a", "What are your hours?")
+
+    assert context == "hours.monday_hours: 9am-5pm"

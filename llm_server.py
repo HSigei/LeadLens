@@ -13,7 +13,8 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from core import ConditionalWriteError, audit, audit_table, retention_expiry, utc_now
+from core import ConditionalWriteError, audit, audit_table, get_facts, retention_expiry, utc_now
+from knowledge import retrieve_context
 from observability import log_event
 from tenant_policy import tenant_by_vapi_assistant_id
 
@@ -22,10 +23,41 @@ ESCALATION_TERMS = ("representative", "human", "agent", "supervisor", "stop call
 STARTED_CALL_CACHE_MAX_SIZE = 2048
 STARTED_CALL_CACHE: OrderedDict[str, None] = OrderedDict()
 BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
+MAX_CONTEXT_BLOCK_CHARS = 1500
+
+
+def _facts_kept_within_limit(fact_lines: list[str], limit: int) -> int:
+    total = 0
+    kept = 0
+    for line in fact_lines:
+        addition = len(line) if kept == 0 else len(line) + 1
+        if total + addition > limit:
+            break
+        total += addition
+        kept += 1
+    return kept
 
 
 def build_context_block(tenant_id: str, latest_user_message: str) -> str:
-    return ""
+    facts = get_facts(tenant_id)
+    fact_lines = [f"{fact['fact_type']}.{fact['fact_key']}: {fact['fact_value']}" for fact in facts]
+    structured = "\n".join(fact_lines)
+    unstructured = retrieve_context(tenant_id, latest_user_message)
+    if not structured:
+        return unstructured[:MAX_CONTEXT_BLOCK_CHARS]
+    if not unstructured:
+        if len(structured) > MAX_CONTEXT_BLOCK_CHARS:
+            # TODO: see CUSTOM_LLM_FINDINGS.md — facts truncated with no priority.
+            dropped = len(fact_lines) - _facts_kept_within_limit(fact_lines, MAX_CONTEXT_BLOCK_CHARS)
+            log_event("custom_llm.context_facts_truncated", logging.WARNING, tenant_id=tenant_id, max_context_block_chars=MAX_CONTEXT_BLOCK_CHARS, structured_length=len(structured), facts_dropped=dropped, unstructured_present=False)
+        return structured[:MAX_CONTEXT_BLOCK_CHARS]
+    remaining = MAX_CONTEXT_BLOCK_CHARS - len(structured) - 2
+    if remaining <= 0:
+        # TODO: see CUSTOM_LLM_FINDINGS.md — facts truncated with no priority.
+        dropped = len(fact_lines) - _facts_kept_within_limit(fact_lines, MAX_CONTEXT_BLOCK_CHARS)
+        log_event("custom_llm.context_facts_truncated", logging.WARNING, tenant_id=tenant_id, max_context_block_chars=MAX_CONTEXT_BLOCK_CHARS, structured_length=len(structured), facts_dropped=dropped, unstructured_present=True)
+        return structured[:MAX_CONTEXT_BLOCK_CHARS]
+    return f"{structured}\n\n{unstructured[:remaining]}"
 
 
 def verify_secret_key(secret_key: str) -> None:
