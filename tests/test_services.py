@@ -116,3 +116,31 @@ def test_dashboard_audit_records_erasure_context(monkeypatch):
     assert captured[-1]["detail"]["retention_days"] == 365
     assert captured[-1]["detail"]["keys_deleted"] == ["a", "t", "r"]
 
+
+def test_upload_knowledge_document_requires_admin(monkeypatch):
+    payload = dashboard.KnowledgeUploadRequest(filename="faq.txt", text_content="Some content.")
+    with pytest.raises(HTTPException, match="Administrator"):
+        dashboard.upload_knowledge_document(payload, {**USER, "role": "supervisor"})
+
+
+def test_upload_knowledge_document_requires_enabled_backend(monkeypatch):
+    monkeypatch.setattr(dashboard, "knowledge_backend_enabled", lambda: False)
+    payload = dashboard.KnowledgeUploadRequest(filename="faq.txt", text_content="Some content.")
+    with pytest.raises(HTTPException, match="disabled"):
+        dashboard.upload_knowledge_document(payload, USER)
+
+
+def test_upload_knowledge_document_stores_and_audits(monkeypatch):
+    captured = []
+    monkeypatch.setattr(dashboard, "knowledge_backend_enabled", lambda: True)
+    monkeypatch.setattr(dashboard, "upload_document", lambda tenant_id, filename, text_content: {"document_id": "doc-1", "filename": filename, "chunk_count": 2})
+    monkeypatch.setattr(dashboard, "audit", lambda tenant_id, actor, action, call_sid=None, detail=None: captured.append({"tenant_id": tenant_id, "action": action, "call_sid": call_sid, "detail": detail}))
+    payload = dashboard.KnowledgeUploadRequest(filename="faq.txt", text_content="Some content.")
+
+    result = dashboard.upload_knowledge_document(payload, USER)
+
+    assert result == {"document_id": "doc-1", "filename": "faq.txt", "chunk_count": 2}
+    assert captured[-1]["action"] == "knowledge_document_uploaded"
+    assert captured[-1]["call_sid"] == "doc-1"
+    assert captured[-1]["detail"] == {"filename": "faq.txt", "chunk_count": 2}
+

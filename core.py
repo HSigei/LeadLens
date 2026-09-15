@@ -12,7 +12,7 @@ import jwt
 from dotenv import load_dotenv
 from fastapi import HTTPException
 
-from database import ConditionalWriteError, PostgresTable
+from database import ConditionalWriteError, PostgresTable, delete_fact, get_facts, insert_document_chunk, search_document_chunks, upsert_fact
 
 
 load_dotenv()

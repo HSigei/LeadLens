@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any, Iterator
 
 
@@ -11,6 +12,8 @@ class ConditionalWriteError(Exception):
 
 
 _SCHEMA_READY = False
+_FACTS_SCHEMA_READY = False
+_DOCUMENTS_SCHEMA_READY = False
 
 
 def _connection():
@@ -176,3 +179,105 @@ def _condition_value(expression: Any) -> Any:
     if value:
         return next(iter(value))
     return None
+
+
+def ensure_facts_schema() -> None:
+    global _FACTS_SCHEMA_READY
+    if _FACTS_SCHEMA_READY:
+        return
+    with _transaction() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tenant_facts (
+                tenant_id TEXT NOT NULL,
+                fact_type TEXT NOT NULL,
+                fact_key TEXT NOT NULL,
+                fact_value TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, fact_type, fact_key)
+            )
+            """
+        )
+    _FACTS_SCHEMA_READY = True
+
+
+def upsert_fact(tenant_id: str, fact_type: str, fact_key: str, fact_value: str) -> None:
+    ensure_facts_schema()
+    with _transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO tenant_facts (tenant_id, fact_type, fact_key, fact_value, updated_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (tenant_id, fact_type, fact_key) DO UPDATE SET fact_value=EXCLUDED.fact_value, updated_at=EXCLUDED.updated_at
+            """,
+            (tenant_id, fact_type, fact_key, fact_value, datetime.now(UTC).isoformat()),
+        )
+
+
+def get_facts(tenant_id: str) -> list[dict[str, Any]]:
+    ensure_facts_schema()
+    with _transaction() as connection:
+        rows = connection.execute(
+            "SELECT fact_type, fact_key, fact_value, updated_at FROM tenant_facts WHERE tenant_id = %s ORDER BY fact_type, fact_key",
+            (tenant_id,),
+        ).fetchall()
+    return [{"fact_type": row[0], "fact_key": row[1], "fact_value": row[2], "updated_at": row[3]} for row in rows]
+
+
+def delete_fact(tenant_id: str, fact_type: str, fact_key: str) -> None:
+    ensure_facts_schema()
+    with _transaction() as connection:
+        connection.execute(
+            "DELETE FROM tenant_facts WHERE tenant_id = %s AND fact_type = %s AND fact_key = %s",
+            (tenant_id, fact_type, fact_key),
+        )
+
+
+def ensure_documents_schema() -> None:
+    global _DOCUMENTS_SCHEMA_READY
+    if _DOCUMENTS_SCHEMA_READY:
+        return
+    with _transaction() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tenant_documents (
+                tenant_id TEXT NOT NULL,
+                document_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                chunk_text TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, document_id, chunk_index)
+            )
+            """
+        )
+        connection.execute("CREATE INDEX IF NOT EXISTS tenant_documents_tenant_idx ON tenant_documents (tenant_id)")
+    _DOCUMENTS_SCHEMA_READY = True
+
+
+def insert_document_chunk(tenant_id: str, document_id: str, chunk_index: int, chunk_text: str) -> None:
+    ensure_documents_schema()
+    with _transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO tenant_documents (tenant_id, document_id, chunk_index, chunk_text, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (tenant_id, document_id, chunk_index) DO UPDATE SET chunk_text=EXCLUDED.chunk_text, created_at=EXCLUDED.created_at
+            """,
+            (tenant_id, document_id, chunk_index, chunk_text, datetime.now(UTC).isoformat()),
+        )
+
+
+def search_document_chunks(tenant_id: str, query: str, limit: int = 4) -> list[dict[str, Any]]:
+    ensure_documents_schema()
+    with _transaction() as connection:
+        rows = connection.execute(
+            """
+            SELECT document_id, chunk_index, chunk_text
+            FROM tenant_documents
+            WHERE tenant_id = %s AND to_tsvector('english', chunk_text) @@ plainto_tsquery('english', %s)
+            ORDER BY ts_rank(to_tsvector('english', chunk_text), plainto_tsquery('english', %s)) DESC
+            LIMIT %s
+            """,
+            (tenant_id, query, query, limit),
+        ).fetchall()
+    return [{"document_id": row[0], "chunk_index": row[1], "chunk_text": row[2]} for row in rows]

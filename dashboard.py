@@ -4,8 +4,10 @@ import os
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel, Field
 
 from core import audit, calls_table, decode_access_token, env, organizations_table
+from knowledge import knowledge_backend_enabled, upload_document
 from storage import storage_client
 
 
@@ -16,6 +18,22 @@ def principal(authorization: Annotated[str | None, Header()] = None) -> dict[str
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Bearer access token required.")
     return decode_access_token(authorization.removeprefix("Bearer "))
+
+
+class KnowledgeUploadRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    text_content: str = Field(min_length=1, max_length=2_000_000)
+
+
+@router.post("/knowledge/upload")
+def upload_knowledge_document(payload: KnowledgeUploadRequest, user: dict[str, str] = Depends(principal)) -> dict[str, object]:
+    if user["role"] != "admin":
+        raise HTTPException(403, "Administrator access is required.")
+    if not knowledge_backend_enabled():
+        raise HTTPException(503, "Knowledge backend is disabled.")
+    result = upload_document(user["tenant_id"], payload.filename, payload.text_content)
+    audit(user["tenant_id"], user["sub"], "knowledge_document_uploaded", result["document_id"], {"filename": payload.filename, "chunk_count": result["chunk_count"]})
+    return result
 
 
 @router.get("/calls")
