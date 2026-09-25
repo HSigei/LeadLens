@@ -1,5 +1,8 @@
 from contextlib import contextmanager
 
+import psycopg
+import pytest
+
 import database
 
 
@@ -116,4 +119,44 @@ def test_ensure_documents_schema_creates_table_once(monkeypatch):
 
     assert len(connection.executed) == 2
     assert "CREATE TABLE IF NOT EXISTS tenant_documents" in connection.executed[0][0]
+
+
+def test_connection_retries_transient_failure_then_succeeds(monkeypatch):
+    attempts = []
+    sleeps = []
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/db")
+    monkeypatch.setattr(database.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    def flaky_connect(dsn):
+        attempts.append(dsn)
+        if len(attempts) == 1:
+            raise psycopg.OperationalError("connection closed")
+        if len(attempts) == 2:
+            raise psycopg.errors.ConnectionTimeout("timeout expired")
+        return "live-connection"
+
+    monkeypatch.setattr(psycopg, "connect", flaky_connect)
+
+    assert database._connection() == "live-connection"
+    assert len(attempts) == 3
+    assert sleeps == [1.0, 2.0]
+
+
+def test_connection_raises_after_exhausting_retries(monkeypatch):
+    attempts = []
+    sleeps = []
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/db")
+    monkeypatch.setattr(database.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    def always_failing_connect(dsn):
+        attempts.append(dsn)
+        raise psycopg.OperationalError("compute suspended")
+
+    monkeypatch.setattr(psycopg, "connect", always_failing_connect)
+
+    with pytest.raises(psycopg.OperationalError, match="compute suspended"):
+        database._connection()
+
+    assert len(attempts) == database.CONNECT_MAX_RETRIES + 1
+    assert sleeps == [1.0, 2.0, 4.0]
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any, Iterator
@@ -14,6 +15,8 @@ class ConditionalWriteError(Exception):
 _SCHEMA_READY = False
 _FACTS_SCHEMA_READY = False
 _DOCUMENTS_SCHEMA_READY = False
+CONNECT_MAX_RETRIES = 3
+CONNECT_INITIAL_BACKOFF_SECONDS = 1.0
 
 
 def _connection():
@@ -21,7 +24,16 @@ def _connection():
         import psycopg
     except ImportError as error:
         raise RuntimeError("psycopg is required when DATABASE_URL is configured.") from error
-    return psycopg.connect(os.environ["DATABASE_URL"])
+    # Neon's free tier suspends idle computes; the first reconnect after suspension can fail transiently.
+    backoff = CONNECT_INITIAL_BACKOFF_SECONDS
+    for retries_left in range(CONNECT_MAX_RETRIES, -1, -1):
+        try:
+            return psycopg.connect(os.environ["DATABASE_URL"])
+        except psycopg.OperationalError:
+            if retries_left == 0:
+                raise
+            time.sleep(backoff)
+            backoff *= 2
 
 
 @contextmanager
