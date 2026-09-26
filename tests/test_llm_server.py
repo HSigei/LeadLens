@@ -69,7 +69,9 @@ def test_custom_llm_streams_groq_response_and_audits_call(monkeypatch):
     monkeypatch.setattr(llm_server.httpx, "AsyncClient", lambda **kwargs: stream_client(['data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}', 'data: {"choices":[{"delta":{"content":" there"},"finish_reason":"stop"}]}', "data: [DONE]"], requests)())
     llm_server.STARTED_CALL_CACHE.clear()
 
-    response = TestClient(app.app).post("/custom-llm/test-secret/chat/completions", json=vapi_request([{"role": "system", "content": "Vapi default"}, {"role": "user", "content": "I need help"}]))
+    request_body = vapi_request([{"role": "system", "content": "Vapi default"}, {"role": "user", "content": "I need help"}])
+    request_body["metadata"]["numModelRequestInTurn"] = 3
+    response = TestClient(app.app).post("/custom-llm/test-secret/chat/completions", json=request_body)
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
@@ -80,6 +82,7 @@ def test_custom_llm_streams_groq_response_and_audits_call(monkeypatch):
     assert requests[0]["messages"][0]["role"] == "system"
     assert [message["role"] for message in requests[0]["messages"]].count("system") == 1
     assert [event[2] for event in audits] == ["call_started", "turn_processed"]
+    assert audits[1][4]["num_model_request_in_turn"] == 3
 
 
 def test_custom_llm_rejects_unmatched_assistant_without_calling_groq(monkeypatch):

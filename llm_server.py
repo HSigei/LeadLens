@@ -204,7 +204,9 @@ async def custom_llm_chat_completions(secret_key: str, request: Request) -> Stre
             schedule_audit(tenant_id, "custom_llm", "call_started", call_id, {"assistant_id": assistant_id})
         cache_started_call(call_id)
     caller_text = latest_user_message(messages)
-    schedule_audit(tenant_id, "custom_llm", "turn_processed", call_id, {"assistant_id": assistant_id, "num_model_request_in_turn": body.get("numModelRequestInTurn")})
+    metadata = body.get("metadata")
+    num_model_request_in_turn = metadata.get("numModelRequestInTurn") if isinstance(metadata, dict) else None
+    schedule_audit(tenant_id, "custom_llm", "turn_processed", call_id, {"assistant_id": assistant_id, "num_model_request_in_turn": num_model_request_in_turn})
     if any(term in caller_text.lower() for term in ESCALATION_TERMS):
         schedule_audit(tenant_id, "custom_llm", "escalation_detected", call_id, {"reason": "caller_requested_handoff"})
         return StreamingResponse(escalation_stream(), media_type="text/event-stream")
