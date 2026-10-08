@@ -31,6 +31,8 @@ def env(name: str) -> str:
 
 REGION = os.getenv("AWS_REGION", "us-east-1")
 MAX_RETRY_COUNT = int(os.getenv("WORKER_MAX_RETRY_COUNT", "5"))
+WORKER_SUPPORTED_PROVIDERS = frozenset({"vapi", "call_center"})
+
 s3 = storage_client()
 sqs = boto3.client("sqs", region_name=REGION)
 ses = boto3.client("sesv2", region_name=REGION)
@@ -121,7 +123,7 @@ def process(call_sid: str) -> None:
         return
     if call.get("tenant_id") is None or call.get("recording_url") is None:
         raise ValueError(f"Call state is incomplete before processing: {call_sid}")
-    if call.get("provider") != "vapi":
+    if call.get("provider") not in WORKER_SUPPORTED_PROVIDERS:
         raise ValueError(f"Unsupported recording provider for worker: {call.get('provider')}")
     recording = httpx.get(call["recording_url"], timeout=120)
     recording.raise_for_status()

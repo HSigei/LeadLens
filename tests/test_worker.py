@@ -73,3 +73,28 @@ def test_worker_processes_vapi_call(monkeypatch):
 def test_worker_process_skips_completed(monkeypatch):
     monkeypatch.setattr(worker, "calls_table", lambda: SimpleNamespace(get_item=lambda **kwargs: {"Item": {"status": "completed"}}))
     worker.process("CA2")
+
+def test_worker_processes_call_center_call(monkeypatch):
+    call = {"call_sid": "CC1", "tenant_id": "tenant-a", "recording_url": "https://recording", "status": "queued", "provider": "call_center"}
+    updates = []
+    table = SimpleNamespace(get_item=lambda **kwargs: {"Item": call}, update_item=lambda **kwargs: updates.append(kwargs))
+    monkeypatch.setattr(worker, "calls_table", lambda: table)
+    monkeypatch.setattr(worker.httpx, "get", lambda *args, **kwargs: Response(content=b"audio"))
+    monkeypatch.setattr(worker, "transcribe", lambda *args: "caller 0712345678")
+    analysis = {"keywords": [], "objections": [], "sentiment": "mixed", "sentiment_score": 50, "agent_performance_score": 70, "issue_resolved": False, "missed_opportunities": [], "training_recommendations": [], "revenue_opportunity": "medium", "customer_experience_notes": "Neutral", "custom": {}}
+    monkeypatch.setattr(worker, "analyze", lambda text, custom_fields=None: analysis)
+    monkeypatch.setattr(worker, "tenant_by_id", lambda tenant_id: None)
+    monkeypatch.setattr(worker, "put_encrypted", lambda *args: None)
+    monkeypatch.setattr(worker, "sync_crm", lambda *args: None)
+    monkeypatch.setattr(worker, "audit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker, "env", lambda name: {"CALL_DATA_BUCKET": "bucket", "REPORT_RECIPIENTS": "recipient@example.com", "REPORT_SENDER": "sender@example.com"}.get(name, "value"))
+    monkeypatch.setattr(worker.s3, "generate_presigned_url", lambda *args, **kwargs: "https://report")
+    monkeypatch.setattr(worker.ses, "send_email", lambda **kwargs: None)
+    worker.process("CC1")
+    assert updates
+
+
+def test_worker_rejects_unsupported_provider(monkeypatch):
+    monkeypatch.setattr(worker, "calls_table", lambda: SimpleNamespace(get_item=lambda **kwargs: {"Item": {"call_sid": "CA1", "tenant_id": "tenant-a", "recording_url": "https://recording", "status": "queued", "provider": "mystery"}}))
+    with pytest.raises(ValueError, match="Unsupported recording provider"):
+        worker.process("CA1")
