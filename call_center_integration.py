@@ -7,7 +7,7 @@ import os
 from typing import Annotated, Literal
 
 import boto3
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from core import ConditionalWriteError, audit, calls_table, organizations_table, utc_now
@@ -92,6 +92,7 @@ def save_preflight(profile: IntegrationProfile, user: dict[str, str] = Depends(a
 @router.post("/events")
 async def receive_event(
     request: Request,
+    background_tasks: BackgroundTasks,
     x_call_center_signature: Annotated[str | None, Header()] = None,
 ) -> dict[str, str]:
     body = await request.body()
@@ -109,6 +110,7 @@ async def receive_event(
             Item={
                 "call_sid": event.call_id,
                 "tenant_id": event.tenant_id,
+                "provider": "call_center",
                 "external_event_id": event.event_id,
                 "status": "queued" if event.recording_url else "received",
                 "from_number": event.caller_number or "",
@@ -128,11 +130,16 @@ async def receive_event(
             return {"status": "duplicate", "call_id": event.call_id}
         raise
     if event.recording_url:
-        boto3.client("sqs", region_name=os.getenv("AWS_REGION", "us-east-1")).send_message(
-            QueueUrl=os.environ["PROCESSING_QUEUE_URL"],
-            MessageBody=json.dumps({"call_sid": event.call_id, "tenant_id": event.tenant_id}),
-            MessageDeduplicationId=event.event_id,
-            MessageGroupId=event.tenant_id,
-        )
+        if os.getenv("QUEUE_MODE", "sqs") == "inline":
+            from worker import process
+
+            background_tasks.add_task(process, event.call_id)
+        else:
+            boto3.client("sqs", region_name=os.getenv("AWS_REGION", "us-east-1")).send_message(
+                QueueUrl=os.environ["PROCESSING_QUEUE_URL"],
+                MessageBody=json.dumps({"call_sid": event.call_id, "tenant_id": event.tenant_id}),
+                MessageDeduplicationId=event.event_id,
+                MessageGroupId=event.tenant_id,
+            )
     audit(event.tenant_id, "call_center", "call_center_event_received", event.call_id, {"event_id": event.event_id, "event_type": event.event_type})
     return {"status": "accepted", "call_id": event.call_id}

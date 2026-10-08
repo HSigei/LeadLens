@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from fastapi import BackgroundTasks
 from starlette.requests import Request
 
 import call_center_integration as integration
@@ -47,5 +48,42 @@ def test_signed_event_is_accepted_only_for_known_tenant(monkeypatch):
         return {"type": "http.request", "body": body, "more_body": False}
 
     request = Request({"type": "http", "method": "POST", "path": "/api/call-center/events", "headers": [], "client": ("test", 1), "server": ("test", 80), "scheme": "http", "query_string": b""}, receive=receive)
-    result = asyncio.run(integration.receive_event(request, f"sha256={signature}"))
+    result = asyncio.run(integration.receive_event(request, BackgroundTasks(), f"sha256={signature}"))
     assert result == {"status": "accepted", "call_id": "CA1"}
+
+
+def test_recording_event_sets_provider_and_queues_per_mode(monkeypatch):
+    secret = "s" * 32
+    body = json.dumps({"event_id": "evt-87654321", "event_type": "call.recording.ready", "call_id": "CC9", "tenant_id": "tenant-a", "recording_url": "https://rec.example.test/a.mp3"}).encode()
+    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    monkeypatch.setenv("CALL_CENTER_WEBHOOK_SECRET", secret)
+    monkeypatch.setattr(integration, "organizations_table", lambda: SimpleNamespace(get_item=lambda **kwargs: {"Item": {"tenant_id": "tenant-a"}}))
+    saved = {}
+    monkeypatch.setattr(integration, "calls_table", lambda: SimpleNamespace(put_item=lambda **kwargs: saved.update(kwargs)))
+    monkeypatch.setattr(integration, "audit", lambda *args, **kwargs: None)
+    sent = {}
+    monkeypatch.setenv("PROCESSING_QUEUE_URL", "https://queue.test")
+    monkeypatch.setattr(integration.boto3, "client", lambda service, **kwargs: SimpleNamespace(send_message=lambda **kwargs: sent.update(kwargs)))
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = Request({"type": "http", "method": "POST", "path": "/api/call-center/events", "headers": [], "client": ("test", 1), "server": ("test", 80), "scheme": "http", "query_string": b""}, receive=receive)
+    background_tasks = BackgroundTasks()
+    result = asyncio.run(integration.receive_event(request, background_tasks, f"sha256={signature}"))
+    assert result == {"status": "accepted", "call_id": "CC9"}
+    assert saved["Item"]["provider"] == "call_center"
+    assert saved["Item"]["status"] == "queued"
+    assert sent  # default QUEUE_MODE=sqs dispatches to the queue
+
+    # Inline mode must not touch SQS; it schedules worker.process instead.
+    monkeypatch.setenv("QUEUE_MODE", "inline")
+    sent.clear()
+    background_tasks = BackgroundTasks()
+    body = json.dumps({"event_id": "evt-87654322", "event_type": "call.recording.ready", "call_id": "CC10", "tenant_id": "tenant-a", "recording_url": "https://rec.example.test/b.mp3"}).encode()
+    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    request = Request({"type": "http", "method": "POST", "path": "/api/call-center/events", "headers": [], "client": ("test", 1), "server": ("test", 80), "scheme": "http", "query_string": b""}, receive=receive)
+    result = asyncio.run(integration.receive_event(request, background_tasks, f"sha256={signature}"))
+    assert result == {"status": "accepted", "call_id": "CC10"}
+    assert not sent
+    assert len(background_tasks.tasks) == 1
