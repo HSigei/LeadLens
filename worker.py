@@ -141,7 +141,7 @@ def process(call_sid: str) -> None:
     audit(tenant_id, "worker", "call_processed", call_sid)
     report_url = s3.generate_presigned_url("get_object", Params={"Bucket": env("CALL_DATA_BUCKET"), "Key": report_key}, ExpiresIn=3600)
     recipients = [address.strip() for address in env("REPORT_RECIPIENTS").split(",") if address.strip()]
-    ses.send_email(FromEmailAddress=env("REPORT_SENDER"), Destination={"ToAddresses": recipients}, Content={"Simple": {"Subject": {"Data": f"Call intelligence report: {call_sid}"}, "Body": {"Text": {"Data": f"Call analysis complete. Secure report link, expiring in 24 hours: {report_url}"}}}})
+    ses.send_email(FromEmailAddress=env("REPORT_SENDER"), Destination={"ToAddresses": recipients}, Content={"Simple": {"Subject": {"Data": f"Call intelligence report: {call_sid}"}, "Body": {"Text": {"Data": f"Call analysis complete. Secure report link, expiring in 1 hour: {report_url}"}}}})
     log_event("worker.process.completed", call_sid=call_sid)
 
 
